@@ -1,0 +1,111 @@
+# ==========================================
+# Cleanup Tracker - Git Ignore
+# ==========================================
+
+# Environment Variables (CRITICAL - NEVER COMMIT)
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env*.local
+*.env
+server/.env*
+!.env.example
+!.env.production.example
+
+# Dependencies
+node_modules/
+server/node_modules/
+client/node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+client/build/
+server/dist/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+server.log
+*.log.*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+.port
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# MongoDB
+mongodb-binaries/
+data/
+*.mongo
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Cloudflare Wrangler
+.wrangler/
+.dev.vars
+wrangler.toml.bak
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+*.backup2
+*.old
+*~
+
+# Operating System
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Security & Secrets
+*.pem
+*.key
+*.cert
+*.crt
+secrets/
+credentials/
+
+# Misc
+.cache/
+.parcel-cache/
+.next/
+out/
+.nuxt/
+.vercel
+.serverless/

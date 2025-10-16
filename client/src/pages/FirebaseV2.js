@@ -27,6 +27,7 @@ import ReportsView from '../views/shared/ReportsView';
 import SettingsView from '../views/shared/SettingsView';
 import MySettingsView from '../views/shared/MySettingsView';
 import QCView from '../views/shared/QCView';
+import { ensureServiceTypeCatalog, DEFAULT_SERVICE_TYPES } from '../utils/serviceTypes';
 
 // Professional error logging and performance monitoring
 const Logger = {
@@ -204,20 +205,6 @@ function LoginForm({ onLogin }) {
   const [employeeId, setEmployeeId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [siteTitle, setSiteTitle] = useState('CleanUp Tracker');
-
-  // Load settings for site title
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await V2.get('/settings');
-  const title = res.data?.siteTitle || 'CleanUp Tracker';
-        setSiteTitle(title);
-      } catch (_) {
-        // ignore, fallback title
-      }
-    })();
-  }, []);
 
   const handleSubmit = useCallback(async (pinToSubmit) => {
     const pin = pinToSubmit || employeeId;
@@ -244,7 +231,7 @@ function LoginForm({ onLogin }) {
       const session = response.data;
       
       if (session?.user && session?.tokens?.accessToken) {
-        console.log('✅ Login successful for:', session.user.name);
+        // Login tracked by Logger.info in handleLogin
         onLogin(session);
         setEmployeeId('');
         setError('');
@@ -300,88 +287,11 @@ function LoginForm({ onLogin }) {
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center justify-center">
             
-            {/* Minimal Header - X.com Style */}
-            <div className="hidden lg:block flex-1 max-w-lg">
-              <div className="text-left space-y-6 animate-fade-in">
-                {/* Professional Logo & Icon */}
-                <div className="flex items-center gap-5">
-                  <div className="relative">
-                    <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 via-cyan-500 to-blue-500 rounded-2xl flex items-center justify-center shadow-2xl border border-white/10">
-                      <span className="text-2xl font-black text-white tracking-wide">CT</span>
-                    </div>
-                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full animate-pulse shadow-sm"></div>
-                  </div>
-                  <div>
-                    <h1 className="text-4xl font-black text-white mb-1 bg-gradient-to-r from-gray-100 to-slate-200 bg-clip-text text-transparent">{siteTitle}</h1>
-                    <p className="text-lg text-slate-300 dark:text-slate-400 font-medium">Precision Cleanup Intelligence</p>
-                  </div>
-                </div>
-
-                {/* Features */}
-                <div className="space-y-6">
-                  <p className="text-xl text-gray-300 leading-relaxed">
-                    Next-generation vehicle detailing management platform built for modern dealerships.
-                  </p>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="flex items-center gap-3 p-3 bg-white/8 dark:bg-white/5 backdrop-blur-lg rounded-lg border border-slate-400/20 dark:border-slate-600/20 hover:bg-white/12 dark:hover:bg-white/8 transition-all duration-300">
-                      <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse"></div>
-                      <span className="text-white font-medium text-sm">Real-time Sync</span>
-                    </div>
-                    <div className="flex items-center gap-3 p-3 bg-white/8 dark:bg-white/5 backdrop-blur-lg rounded-lg border border-slate-400/20 dark:border-slate-600/20 hover:bg-white/12 dark:hover:bg-white/8 transition-all duration-300">
-                      <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse"></div>
-                      <span className="text-white font-medium text-sm">Secure Access</span>
-                    </div>
-                    <div className="flex items-center gap-3 p-3 bg-white/8 dark:bg-white/5 backdrop-blur-lg rounded-lg border border-slate-400/20 dark:border-slate-600/20 hover:bg-white/12 dark:hover:bg-white/8 transition-all duration-300">
-                      <div className="w-3 h-3 bg-cyan-400 rounded-full animate-pulse"></div>
-                      <span className="text-white font-medium text-sm">Smart Analytics</span>
-                    </div>
-                    <div className="flex items-center gap-3 p-3 bg-white/8 dark:bg-white/5 backdrop-blur-lg rounded-lg border border-slate-400/20 dark:border-slate-600/20 hover:bg-white/12 dark:hover:bg-white/8 transition-all duration-300">
-                      <div className="w-3 h-3 bg-slate-400 rounded-full animate-pulse"></div>
-                      <span className="text-white font-medium text-sm">Mobile Ready</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Professional Trust Indicators */}
-                <div className="flex items-center gap-4 pt-4 border-t border-slate-400/20 dark:border-slate-600/20">
-                  <div className="flex items-center gap-2 text-slate-300 dark:text-slate-400">
-                    <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.414-4.414a2 2 0 00-2.828 0L12 10.172L5.414 3.586a2 2 0 00-2.828 2.828l7 7a2 2 0 002.828 0l11-11a2 2 0 00-2.828-2.828z" />
-                    </svg>
-                    <span className="text-sm">Enterprise Security</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-slate-300 dark:text-slate-400">
-                    <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span className="text-sm">24/7 Uptime</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* X.com Style Login - Single Screen */}
             <div className="w-full max-w-md">
               <div className="relative">
                 {/* Main Card - Pure Black X.com Style */}
                 <div className="relative bg-black p-6 animate-scale-in">
-                  
-                  {/* Site Title at Top - X.com Style */}
-                  <div className="text-center mb-10">
-                    {/* Logo Icon */}
-                    <div className="flex justify-center mb-4">
-                      <div className="w-16 h-16 bg-gradient-to-br from-emerald-500 via-cyan-500 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg border border-white/10">
-                        <span className="text-2xl font-black text-white tracking-wide">CT</span>
-                      </div>
-                    </div>
-                    
-                    {/* Site Title */}
-                    <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">
-                      {siteTitle}
-                    </h1>
-                    <p className="text-gray-600 font-normal text-base">Enter your 4-digit PIN</p>
-                  </div>
 
                   <form onSubmit={handleSubmit} className="space-y-6">
                     {/* Error Message */}
@@ -664,7 +574,10 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
   const [isSearching, setIsSearching] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [settings, setSettings] = useState({ siteTitle: 'CleanUp Tracker' });
+  const [settings, setSettings] = useState({
+    siteTitle: 'CleanUp Tracker',
+    serviceTypes: DEFAULT_SERVICE_TYPES
+  });
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [componentError, setComponentError] = useState(null);
   // Sidebar visibility: default hidden on mobile, shown on large screens
@@ -709,6 +622,12 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
     if (view) return view.charAt(0).toUpperCase() + view.slice(1);
     return 'Overview';
   }, [view, user.role]);
+  const serviceCatalog = useMemo(() => (
+    ensureServiceTypeCatalog(settings?.serviceTypes || DEFAULT_SERVICE_TYPES)
+  ), [settings]);
+  const defaultServiceType = useMemo(() => (
+    serviceCatalog.find((entry) => entry.isActive !== false) || serviceCatalog[0] || null
+  ), [serviceCatalog]);
   const previousViewRef = useRef(view);
   useEffect(() => {
     if (previousViewRef.current !== view) {
@@ -817,14 +736,22 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
         fetchWithRetry('/users'),
         fetchWithRetry('/settings').catch(() => {
           Logger.warn('Settings endpoint failed, using defaults');
-          return { data: { siteTitle: 'CleanUp Tracker' } };
+          return {
+            data: {
+              siteTitle: 'CleanUp Tracker',
+              serviceTypes: DEFAULT_SERVICE_TYPES
+            }
+          };
         })
       ]);
       
       // Data validation and sanitization
       const jobs = Array.isArray(jobsRes.data) ? jobsRes.data : [];
       const usersArray = Array.isArray(usersRes.data) ? usersRes.data : [];
-  const settings = settingsRes.data || { siteTitle: 'CleanUp Tracker' };
+  const settings = settingsRes.data || {
+    siteTitle: 'CleanUp Tracker',
+    serviceTypes: DEFAULT_SERVICE_TYPES
+  };
 
       // Performance optimization: batch state updates
       setJobs(jobs);
@@ -846,8 +773,9 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
       // Sanitize settings
       const sanitizedSettings = {
         ...settings,
-  siteTitle: Security.sanitizeInput(settings.siteTitle || 'CleanUp Tracker'),
-        theme: settings.theme || 'light'
+        siteTitle: Security.sanitizeInput(settings.siteTitle || 'CleanUp Tracker'),
+        theme: settings.theme || 'light',
+        serviceTypes: ensureServiceTypeCatalog(settings.serviceTypes || DEFAULT_SERVICE_TYPES)
       };
       setSettings(sanitizedSettings);
 
@@ -1831,7 +1759,26 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
           {(user.role === 'detailer' || user.role === 'technician') && (
             <>
               {view === 'dashboard' && <DetailerDashboard user={user} jobs={activeJobs} completedJobs={completedJobs} userActiveJob={userActiveJob} onStopWork={handleStopWork} onOpenScanner={() => setShowScanner(true)} onGoToNewJob={() => { setView('jobs'); closeSidebar(); }} />}
-              {view === 'jobs' && <DetailerNewJob user={user} onSearch={handleSearch} searchResults={searchResults} isSearching={isSearching} searchTerm={searchTerm} setSearchTerm={setSearchTerm} showScanner={showScanner} setShowScanner={setShowScanner} onScanSuccess={handleScanSuccess} hasSearched={hasSearched} onJobCreated={async () => { await loadInitialData(); setView('dashboard'); closeSidebar(); }} />}
+              {view === 'jobs' && (
+                <DetailerNewJob
+                  user={user}
+                  onSearch={handleSearch}
+                  searchResults={searchResults}
+                  isSearching={isSearching}
+                  searchTerm={searchTerm}
+                  setSearchTerm={setSearchTerm}
+                  showScanner={showScanner}
+                  setShowScanner={setShowScanner}
+                  onScanSuccess={handleScanSuccess}
+                  hasSearched={hasSearched}
+                  serviceTypesCatalog={serviceCatalog}
+                  onJobCreated={async () => {
+                    await loadInitialData();
+                    setView('dashboard');
+                    closeSidebar();
+                  }}
+                />
+              )}
               {view === 'me' && <MySettingsView user={user} />}
             </>
           )}
@@ -1842,12 +1789,13 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
               {view === 'dashboard' && <ManagerDashboard jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} dashboardStats={dashboardStats} />}
               {view === 'jobs' && <JobsView jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} />}
               {view === 'qc' && <QCView jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} />}
-              {view === 'users' && <UsersView users={users} detailers={detailers} onDeleteUser={deleteUser} />}
+              {view === 'users' && <UsersView users={users} detailers={detailers} onDeleteUser={deleteUser} onRefresh={loadInitialData} />}
               {view === 'reports' && <ReportsView jobs={jobs} users={users} />}
               {view === 'inventory' && (
                 <EnterpriseInventory
                   theme={theme}
                   currentUser={user}
+                  serviceTypes={serviceCatalog}
                   onVehicleUpdated={(updatedVehicle) => {
                     if (!updatedVehicle) return;
                     loadInitialData();
@@ -1855,13 +1803,16 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
                   onCreateJob={async (vehicle) => {
                     if (!vehicle) return;
                     try {
+                      const serviceTypeName = defaultServiceType?.name || 'Cleanup';
+                      const expectedDuration = defaultServiceType?.expectedMinutes || 60;
                       await V2.post('/jobs', {
                         technicianId: user.id,
                         technicianName: user.name,
                         vin: vehicle.vin,
                         stockNumber: vehicle.stockNumber,
                         vehicleDescription: `${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''}`.trim() || vehicle.vehicle || 'Vehicle',
-                        serviceType: 'Cleanup',
+                        serviceType: serviceTypeName,
+                        expectedDuration,
                         year: vehicle.year,
                         make: vehicle.make,
                         model: vehicle.model,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { V2 } from '../utils/v2Client';
+import { ensureServiceTypeCatalog, DEFAULT_SERVICE_TYPES } from '../utils/serviceTypes';
 
 // Security utility for input sanitization
 const Security = {
@@ -47,7 +48,10 @@ const Logger = {
  * @returns {Object} { settings, loading, error, updateSettings, refetch }
  */
 export function useSettings(currentUser, { autoFetch = true } = {}) {
-  const [settings, setSettings] = useState({ siteTitle: 'Cleanup Tracker' });
+  const [settings, setSettings] = useState({
+    siteTitle: 'Cleanup Tracker',
+    serviceTypes: DEFAULT_SERVICE_TYPES
+  });
   const [loading, setLoading] = useState(autoFetch);
   const [error, setError] = useState(null);
 
@@ -55,7 +59,10 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
   const fetchSettings = useCallback(async () => {
     if (!currentUser || !currentUser.id) {
       Logger.warn('Fetch settings called without authenticated user - using defaults');
-      setSettings({ siteTitle: 'Cleanup Tracker' });
+      setSettings({
+        siteTitle: 'Cleanup Tracker',
+        serviceTypes: DEFAULT_SERVICE_TYPES
+      });
       setLoading(false);
       return;
     }
@@ -82,16 +89,25 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
 
       const response = await fetchWithRetry().catch(() => {
         Logger.warn('Settings endpoint failed, using defaults');
-        return { data: { siteTitle: 'Cleanup Tracker' } };
+        return {
+          data: {
+            siteTitle: 'Cleanup Tracker',
+            serviceTypes: DEFAULT_SERVICE_TYPES
+          }
+        };
       });
 
-      const settingsData = response.data || { siteTitle: 'Cleanup Tracker' };
+      const settingsData = response.data || {
+        siteTitle: 'Cleanup Tracker',
+        serviceTypes: DEFAULT_SERVICE_TYPES
+      };
 
       // Sanitize settings
       const sanitizedSettings = {
         ...settingsData,
         siteTitle: Security.sanitizeInput(settingsData.siteTitle || 'Cleanup Tracker'),
-        theme: settingsData.theme || 'dark'
+        theme: settingsData.theme || 'dark',
+        serviceTypes: ensureServiceTypeCatalog(settingsData.serviceTypes)
       };
 
       setSettings(sanitizedSettings);
@@ -107,7 +123,10 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
       const errorMessage = err.response?.data?.error || err.message || 'Failed to load settings';
       setError(errorMessage);
       // Keep default settings on error
-      setSettings({ siteTitle: 'Cleanup Tracker' });
+      setSettings({
+        siteTitle: 'Cleanup Tracker',
+        serviceTypes: DEFAULT_SERVICE_TYPES
+      });
     } finally {
       setLoading(false);
     }

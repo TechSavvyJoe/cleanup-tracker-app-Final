@@ -1,5 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
+import {
+  ensureServiceTypeCatalog,
+  DEFAULT_SERVICE_TYPES,
+  formatExpectedMinutes
+} from '../utils/serviceTypes';
 
 // Create a minimal API client
 const API = axios.create({
@@ -12,10 +17,55 @@ const SimpleLogin = () => {
   const [user, setUser] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [serviceTypes, setServiceTypes] = useState(() => ensureServiceTypeCatalog(DEFAULT_SERVICE_TYPES));
+  const [serviceTypesLoading, setServiceTypesLoading] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
-  const [newJob, setNewJob] = useState({ vin: '', serviceType: 'Cleanup' });
+  const [newJob, setNewJob] = useState(() => {
+    const initialCatalog = ensureServiceTypeCatalog(DEFAULT_SERVICE_TYPES);
+    const firstActive = initialCatalog.find((type) => type.isActive !== false) || initialCatalog[0];
+    return {
+      vin: '',
+      serviceType: firstActive?.name || ''
+    };
+  });
   const [savingJob, setSavingJob] = useState(false);
+
+  const activeServiceTypes = useMemo(
+    () => serviceTypes.filter((type) => type.isActive !== false),
+    [serviceTypes]
+  );
+
+  const selectedServiceType = useMemo(
+    () => activeServiceTypes.find((type) => type.name === newJob.serviceType) || null,
+    [activeServiceTypes, newJob.serviceType]
+  );
+
+  const loadServiceTypes = useCallback(async () => {
+    setServiceTypesLoading(true);
+    try {
+      const response = await API.get('/settings');
+      const catalog = ensureServiceTypeCatalog(response.data?.serviceTypes);
+      setServiceTypes(catalog);
+      const firstActive = catalog.find((type) => type.isActive !== false) || catalog[0];
+      setNewJob((prev) => {
+        const stillValid = catalog.some((type) => type.name === prev.serviceType && type.isActive !== false);
+        if (stillValid) {
+          return prev;
+        }
+        return {
+          ...prev,
+          serviceType: firstActive?.name || ''
+        };
+      });
+    } catch (error) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('Failed to load service types:', error);
+      }
+    } finally {
+      setServiceTypesLoading(false);
+    }
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -49,13 +99,35 @@ const SimpleLogin = () => {
     return Array.isArray(response.data) ? response.data : [];
   }, []);
 
+  useEffect(() => {
+    loadServiceTypes();
+  }, [loadServiceTypes]);
+
+  useEffect(() => {
+    if (activeServiceTypes.length === 0) {
+      setNewJob((prev) => ({ ...prev, serviceType: '' }));
+      return;
+    }
+    setNewJob((prev) => {
+      if (activeServiceTypes.some((type) => type.name === prev.serviceType)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        serviceType: activeServiceTypes[0].name
+      };
+    });
+  }, [activeServiceTypes]);
+
   const refreshJobs = useCallback(async () => {
     const jobList = await fetchJobs();
     setJobs(jobList);
   }, [fetchJobs]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
     let isActive = true;
     setJobsLoading(true);
@@ -87,7 +159,9 @@ const SimpleLogin = () => {
 
   const createJob = async (event) => {
     event.preventDefault();
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
     const vin = newJob.vin.trim().toUpperCase();
     if (!vin) {
@@ -95,21 +169,36 @@ const SimpleLogin = () => {
       return;
     }
 
+    if (!selectedServiceType) {
+      alert('No active service types are available. Please contact a manager.');
+      return;
+    }
+
     setSavingJob(true);
 
     try {
+      const expectedDuration = selectedServiceType?.expectedMinutes || 60;
       await API.post('/jobs', {
         technicianId: user.id || 'web-user',
         technicianName: user.name || 'Web User',
         vin,
         stockNumber: '',
         vehicleDescription: 'Simple Login Job',
-        serviceType: newJob.serviceType || 'Cleanup',
+        serviceType: selectedServiceType?.name || newJob.serviceType || 'Cleanup',
+        expectedDuration,
         priority: 'Normal'
       });
 
       await refreshJobs();
-      setNewJob({ vin: '', serviceType: newJob.serviceType });
+      setNewJob(({ serviceType }) => {
+        const fallback = activeServiceTypes[0]?.name || serviceType;
+        return {
+          vin: '',
+          serviceType: activeServiceTypes.some((type) => type.name === serviceType)
+            ? serviceType
+            : fallback || ''
+        };
+      });
       alert('Job created successfully');
     } catch (err) {
       alert('Failed to create job: ' + (err.response?.data?.error || err.message));
@@ -119,7 +208,9 @@ const SimpleLogin = () => {
   };
 
   const completeJob = async (jobId) => {
-    if (!user || !jobId) return;
+    if (!user || !jobId) {
+      return;
+    }
 
     try {
       await API.put(`/jobs/${jobId}/complete`);
@@ -162,7 +253,7 @@ const SimpleLogin = () => {
                   <input
                     type="text"
                     value={newJob.vin}
-                    onChange={(e) => setNewJob({...newJob, vin: e.target.value.toUpperCase()})}
+                    onChange={(e) => setNewJob((prev) => ({ ...prev, vin: e.target.value.toUpperCase() }))}
                     placeholder="Enter VIN"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     maxLength={17}
@@ -173,21 +264,26 @@ const SimpleLogin = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Service Type</label>
                   <select
                     value={newJob.serviceType}
-                    onChange={(e) => setNewJob({...newJob, serviceType: e.target.value})}
+                    onChange={(e) => setNewJob((prev) => ({ ...prev, serviceType: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={serviceTypesLoading || activeServiceTypes.length === 0}
                   >
-                    <option value="Cleanup">Cleanup</option>
-                    <option value="Detail">Detail</option>
-                    <option value="Delivery">Delivery</option>
-                    <option value="Rewash">Rewash</option>
-                    <option value="Lot Car">Lot Car</option>
-                    <option value="FCTP">FCTP</option>
-                    <option value="Touch-up">Touch-up</option>
+                    {activeServiceTypes.map((type) => (
+                      <option key={type.id} value={type.name}>
+                        {type.name} {type.expectedMinutes ? `• ${formatExpectedMinutes(type.expectedMinutes)}` : ''}
+                      </option>
+                    ))}
                   </select>
+                  {serviceTypesLoading && (
+                    <p className="mt-2 text-sm text-gray-500">Loading service catalog…</p>
+                  )}
+                  {!serviceTypesLoading && activeServiceTypes.length === 0 && (
+                    <p className="mt-2 text-sm text-red-500">No active service types available. Ask a manager to publish the catalog.</p>
+                  )}
                 </div>
                 <button
                   type="submit"
-                  disabled={savingJob}
+                  disabled={savingJob || !selectedServiceType}
                   className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-bold py-3 px-4 rounded-lg transition-colors"
                 >
                   {savingJob ? 'Creating...' : 'Create Job'}
@@ -217,6 +313,9 @@ const SimpleLogin = () => {
                           }`}>
                             Status: {job.status}
                           </p>
+                          {job.expectedDuration && (
+                            <p className="text-xs text-gray-500">Target: {formatExpectedMinutes(job.expectedDuration)}</p>
+                          )}
                         </div>
                         {job.status === 'In Progress' && (
                           <button

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -14,8 +14,6 @@ const SimpleReports = ({ jobs, users, theme }) => {
       try {
         const response = await fetch('/api/v2/reports');
         const data = await response.json();
-        
-        console.log('Raw API data:', data);
         
         // Transform API response to match component expectations
         const transformedData = {
@@ -35,7 +33,6 @@ const SimpleReports = ({ jobs, users, theme }) => {
           recentActivity: data.dailyTrends || []
         };
         
-        console.log('Transformed data:', transformedData);
         setReportData(transformedData);
       } catch (error) {
         console.error('Failed to load report data:', error);
@@ -177,44 +174,87 @@ const SimpleReports = ({ jobs, users, theme }) => {
     return null;
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     try {
       const jobRows = buildJobExportRows();
-      const workbook = XLSX.utils.book_new();
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'CleanUp Tracker';
+      workbook.created = new Date();
+
+      const jobsSheet = workbook.addWorksheet('Jobs', {
+        views: [{ state: 'frozen', ySplit: 1 }]
+      });
+
+      const columns = [
+        { header: 'ID', key: 'ID' },
+        { header: 'Status', key: 'Status' },
+        { header: 'Service Type', key: 'Service Type' },
+        { header: 'Technician', key: 'Technician' },
+        { header: 'VIN', key: 'VIN' },
+        { header: 'Stock', key: 'Stock' },
+        { header: 'Location', key: 'Location' },
+        { header: 'Created', key: 'Created' },
+        { header: 'Completed', key: 'Completed' }
+      ];
+
+      jobsSheet.columns = columns.map((column) => ({
+        ...column,
+        width: Math.min(
+          40,
+          Math.max(
+            12,
+            Math.ceil(
+              Math.max(
+                column.header.length,
+                ...jobRows.map((row) => String(row[column.key] ?? '').length)
+              ) * 1.1
+            )
+          )
+        )
+      }));
 
       if (jobRows.length > 0) {
-        const worksheet = XLSX.utils.json_to_sheet(jobRows);
-        // Auto-size columns based on content length
-        const headers = ['ID', 'Status', 'Service Type', 'Technician', 'VIN', 'Stock', 'Location', 'Created', 'Completed'];
-        const colWidths = headers.map((h, idx) => {
-          const maxLen = Math.max(
-            h.length,
-            ...jobRows.map((r) => String(r[headers[idx]] ?? '').length)
-          );
-          // Approximate width in characters; add padding
-          return { wch: Math.min(40, Math.max(10, Math.ceil(maxLen * 1.1))) };
-        });
-        worksheet['!cols'] = colWidths;
-        // Add autofilter to header row
-        worksheet['!autofilter'] = { ref: `A1:I${jobRows.length + 1}` };
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Jobs');
+        jobsSheet.addRows(jobRows);
+        jobsSheet.autoFilter = {
+          from: 'A1',
+          to: `I${jobRows.length + 1}`
+        };
       } else {
-        const worksheet = XLSX.utils.aoa_to_sheet([["Notice"], ["No job data available for export."]]);
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Jobs');
+        jobsSheet.addRow({ ID: 'Notice', Status: 'No job data available for export.' });
       }
 
-      const summarySheet = XLSX.utils.aoa_to_sheet([
-        ['Metric', 'Value'],
-        ['Total Jobs', summary.totalJobs || 0],
-        ['Completed Jobs', summary.completedJobs || 0],
-        ['Pending Jobs', summary.pendingJobs || 0],
-        ['In Progress', summary.inProgressJobs || 0],
-        ['Active Users', summary.totalUsers || 0]
-      ]);
-      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
+      jobsSheet.getRow(1).font = { bold: true };
+      jobsSheet.getRow(1).alignment = { vertical: 'middle' };
+      jobsSheet.getRow(1).eachCell((cell) => {
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: 'FFD0D7DE' } }
+        };
+      });
 
-      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-      const blob = new Blob([excelBuffer], { type: 'application/octet-stream' });
+      jobsSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        if (rowNumber !== 1) {
+          row.alignment = { vertical: 'middle', wrapText: true };
+        }
+      });
+
+      const summarySheet = workbook.addWorksheet('Summary');
+      summarySheet.columns = [
+        { header: 'Metric', key: 'metric', width: 24 },
+        { header: 'Value', key: 'value', width: 18 }
+      ];
+      summarySheet.addRows([
+        { metric: 'Total Jobs', value: summary.totalJobs || 0 },
+        { metric: 'Completed Jobs', value: summary.completedJobs || 0 },
+        { metric: 'Pending Jobs', value: summary.pendingJobs || 0 },
+        { metric: 'In Progress', value: summary.inProgressJobs || 0 },
+        { metric: 'Active Users', value: summary.totalUsers || 0 }
+      ]);
+      summarySheet.getRow(1).font = { bold: true };
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      });
       saveAs(blob, `${getExportFileBase()}.xlsx`);
     } catch (error) {
       console.error('Failed to export Excel report:', error);

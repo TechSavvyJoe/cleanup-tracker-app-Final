@@ -13,6 +13,11 @@ const {
   setInventoryCsvUrl,
   DEFAULT_INVENTORY_CSV_URL
 } = require('../utils/inventorySource');
+const {
+  ensureServiceTypeCatalog,
+  MIN_EXPECTED_MINUTES,
+  MAX_EXPECTED_MINUTES
+} = require('../utils/serviceTypeCatalog');
 
 const ACCESS_TOKEN_TTL = process.env.JWT_ACCESS_EXPIRATION || '15m';
 const REFRESH_TOKEN_TTL = process.env.JWT_REFRESH_EXPIRATION || '7d';
@@ -342,7 +347,9 @@ router.get('/reports', async (req, res) => {
 router.get('/settings', async (req, res) => {
   const siteTitle = settingsStore.get('siteTitle') || 'Cleanup Tracker';
   const inventoryCsvUrl = getInventoryCsvUrl() || DEFAULT_INVENTORY_CSV_URL;
-  res.json({ siteTitle, inventoryCsvUrl });
+  const storedServiceTypes = settingsStore.get('serviceTypes');
+  const serviceTypes = ensureServiceTypeCatalog(storedServiceTypes);
+  res.json({ siteTitle, inventoryCsvUrl, serviceTypes });
 });
 
 // Enhanced auth supporting PIN or employee number for all roles
@@ -480,13 +487,19 @@ router.get('/diag', async (req, res) => {
 
 router.put('/settings', async (req, res) => {
   const { key, value } = req.body || {};
-  if (!key) return res.status(400).json({ error: 'key required' });
+  if (!key) {
+    return res.status(400).json({ error: 'key required' });
+  }
   try {
     if (key === 'inventoryCsvUrl') {
       if (!value) {
         return res.status(400).json({ error: 'Inventory CSV URL required' });
       }
       await setInventoryCsvUrl(value);
+    } else if (key === 'serviceTypes') {
+      const catalog = ensureServiceTypeCatalog(value);
+      await settingsStore.set('serviceTypes', catalog);
+      return res.json({ ok: true, serviceTypes: catalog });
     } else {
       await settingsStore.set(key, value);
     }
@@ -572,8 +585,31 @@ router.post('/jobs', async (req, res) => {
     const {
       technicianId, technicianName, vin, stockNumber, vehicleDescription,
       serviceType, date, salesPerson, assignedTechnicianIds, priority,
-      year, make, model, vehicleColor
+      year, make, model, vehicleColor, expectedDuration: requestedExpectedDuration
     } = req.body;
+
+    const clampExpectedDuration = (value) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return 60;
+      }
+      const rounded = Math.round(numeric);
+      if (rounded < MIN_EXPECTED_MINUTES) {
+        return MIN_EXPECTED_MINUTES;
+      }
+      if (rounded > MAX_EXPECTED_MINUTES) {
+        return MAX_EXPECTED_MINUTES;
+      }
+      return rounded;
+    };
+
+    const catalog = ensureServiceTypeCatalog(settingsStore.get('serviceTypes'));
+    const normalizedServiceType = typeof serviceType === 'string' ? serviceType.trim() : '';
+    const matchedService = catalog.find((type) => type.name === normalizedServiceType);
+    const sanitizedServiceType = matchedService?.name || normalizedServiceType || 'Cleanup';
+    const resolvedExpectedDuration = matchedService
+      ? clampExpectedDuration(matchedService.expectedMinutes)
+      : clampExpectedDuration(requestedExpectedDuration);
 
     const jobData = {
       technicianId: technicianId || 'unknown',
@@ -581,11 +617,11 @@ router.post('/jobs', async (req, res) => {
       vin: vin || 'UNKNOWN_VIN',
       stockNumber: stockNumber || '',
       vehicleDescription: vehicleDescription || 'Unknown Vehicle',
-      serviceType: serviceType || 'Cleanup',
+  serviceType: sanitizedServiceType,
       date: date || new Date().toISOString().split('T')[0],
       status: 'In Progress',
       startTime: new Date(),
-      expectedDuration: 60,
+      expectedDuration: resolvedExpectedDuration,
       qcRequired: false,
       salesPerson: salesPerson || '',
       assignedTechnicianIds: assignedTechnicianIds || [technicianId || 'unknown'],
@@ -973,7 +1009,8 @@ router.get('/vehicles', async (req, res) => {
       );
     }
     if (status && String(status).trim() && String(status).toLowerCase() !== 'all') {
-      find.status = status;
+      const statusTerm = String(status).trim();
+      find.status = new RegExp(`^${escapeRegex(statusTerm)}$`, 'i');
     }
 
     const sortDir = String(order).toLowerCase() === 'asc' ? 1 : -1;

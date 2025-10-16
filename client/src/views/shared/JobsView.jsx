@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import PropTypes from 'prop-types';
 import { V2 } from '../../utils/v2Client';
+import { useToast } from '../../components/Toast';
 import LiveTimer from '../../components/LiveTimer';
 import DateUtils from '../../utils/dateUtils';
 
-function JobsView({ jobs, users, currentUser, onRefresh }) {
+const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh }) {
   const [selectedJob, setSelectedJob] = useState(null);
   const [jobDetails, setJobDetails] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+  const toast = useToast();
+
   // 🔍 Enterprise Search State
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocus, setSearchFocus] = useState(false);
@@ -196,7 +199,7 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
 
   return (
     <div className="space-y-8 text-[color:var(--x-text-primary)]">
-      <section className="x-card x-fade-in">
+      <section className="x-card x-card--premium x-fade-in">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="x-icon-chip">
@@ -333,7 +336,8 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
             <select
               value={filters.serviceType}
               onChange={e => setFilters(prev => ({ ...prev, serviceType: e.target.value }))}
-              className="x-input x-input--dense"
+              className="x-select"
+              style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem' }}
             >
               <option value="">All Types</option>
               {filterOptions.serviceTypes.map(type => (
@@ -347,7 +351,8 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
             <select
               value={filters.vehicleType}
               onChange={e => setFilters(prev => ({ ...prev, vehicleType: e.target.value }))}
-              className="x-input x-input--dense"
+              className="x-select"
+              style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem' }}
             >
               <option value="">All</option>
               <option value="new">New</option>
@@ -360,11 +365,12 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
             <select
               value={filters.detailer}
               onChange={e => setFilters(prev => ({ ...prev, detailer: e.target.value }))}
-              className="x-input x-input--dense"
+              className="x-select"
+              style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem' }}
             >
               <option value="">All</option>
               {filterOptions.detailers.map(detailer => (
-                <option key={detailer.id} value={detailer.id}>{detailer.name}</option>
+                <option key={detailer.id || detailer._id} value={detailer.id || detailer._id}>{detailer.name}</option>
               ))}
             </select>
           </div>
@@ -374,7 +380,8 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
             <select
               value={filters.status}
               onChange={e => setFilters(prev => ({ ...prev, status: e.target.value }))}
-              className="x-input x-input--dense"
+              className="x-select"
+              style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem' }}
             >
               <option value="">All</option>
               {filterOptions.statuses.map(status => (
@@ -711,54 +718,63 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
                 {jobDetails.job?.status !== 'completed' && (
                   <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={async () => { 
-                        try { 
+                      onClick={async () => {
+                        try {
                           const jobId = jobDetails.job?.id || selectedJob?.id || selectedJob?._id;
-                          if (!jobId) return alert('Job ID not found');
-                          await V2.put(`/jobs/${jobId}/start`, { userId: currentUser?.id }); 
-                          await onRefresh?.(); 
-                          closeDetails(); 
-                          alert('Timer started');
-                        } catch (e) { 
-                          alert('Start failed: ' + (e.response?.data?.error || e.message)); 
-                        } 
+                          if (!jobId) {
+                            toast.error('Job ID not found');
+                            return;
+                          }
+                          await V2.put(`/jobs/${jobId}/start`, { userId: currentUser?.id });
+                          await onRefresh?.();
+                          closeDetails();
+                          toast.success('Timer started successfully');
+                        } catch (e) {
+                          toast.error('Start failed: ' + (e.response?.data?.error || e.message));
+                        }
                       }}
                       className="x-button x-button--accent text-sm"
                     >
                       Start Timer
                     </button>
                     <button
-                      onClick={async () => { 
-                        try { 
+                      onClick={async () => {
+                        try {
                           const jobId = jobDetails.job?.id || selectedJob?.id || selectedJob?._id;
-                          if (!jobId) return alert('Job ID not found');
-                          await V2.put(`/jobs/${jobId}/stop`, { userId: currentUser?.id }); 
-                          await onRefresh?.(); 
-                          closeDetails(); 
-                          alert('Timer stopped');
-                        } catch (e) { 
-                          alert('Stop failed: ' + (e.response?.data?.error || e.message)); 
-                        } 
+                          if (!jobId) {
+                            toast.error('Job ID not found');
+                            return;
+                          }
+                          await V2.put(`/jobs/${jobId}/stop`, { userId: currentUser?.id });
+                          await onRefresh?.();
+                          closeDetails();
+                          toast.success('Timer stopped successfully');
+                        } catch (e) {
+                          toast.error('Stop failed: ' + (e.response?.data?.error || e.message));
+                        }
                       }}
                       className="x-button x-button--secondary text-sm"
                     >
                       Stop Timer
                     </button>
                     <button
-                      onClick={async () => { 
-                        try { 
+                      onClick={async () => {
+                        try {
                           const jobId = jobDetails.job?.id || selectedJob?.id || selectedJob?._id;
-                          if (!jobId) return alert('Job ID not found');
-                          await V2.put(`/jobs/${jobId}/complete`, { 
+                          if (!jobId) {
+                            toast.error('Job ID not found');
+                            return;
+                          }
+                          await V2.put(`/jobs/${jobId}/complete`, {
                             userId: currentUser?.id,
                             completedAt: new Date().toISOString()
-                          }); 
-                          await onRefresh?.(); 
-                          closeDetails(); 
-                          alert('Job marked complete');
-                        } catch (e) { 
-                          alert('Complete failed: ' + (e.response?.data?.error || e.message)); 
-                        } 
+                          });
+                          await onRefresh?.();
+                          closeDetails();
+                          toast.success('Job marked complete');
+                        } catch (e) {
+                          toast.error('Complete failed: ' + (e.response?.data?.error || e.message));
+                        }
                       }}
                       className="x-button text-sm"
                     >
@@ -773,5 +789,41 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
       )}
     </div>
   );
-}
+});
+
+JobsView.propTypes = {
+  jobs: PropTypes.arrayOf(PropTypes.shape({
+    id: PropTypes.string,
+    _id: PropTypes.string,
+    status: PropTypes.string,
+    vin: PropTypes.string,
+    stockNumber: PropTypes.string,
+    vehicleDescription: PropTypes.string,
+    make: PropTypes.string,
+    model: PropTypes.string,
+    year: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    color: PropTypes.string,
+    vehicleColor: PropTypes.string,
+    serviceType: PropTypes.string,
+    technicianName: PropTypes.string,
+    technicianId: PropTypes.string,
+    salesPerson: PropTypes.string,
+    priority: PropTypes.string,
+    startTime: PropTypes.string,
+    startedAt: PropTypes.string,
+    completedAt: PropTypes.string,
+    date: PropTypes.string,
+    createdAt: PropTypes.string
+  })).isRequired,
+  users: PropTypes.object,
+  currentUser: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    role: PropTypes.string
+  }),
+  onRefresh: PropTypes.func
+};
+
+JobsView.displayName = 'JobsView';
+
 export default JobsView;

@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import PropTypes from 'prop-types';
 import { V2 } from '../../utils/v2Client';
+import { useToast } from '../../components/Toast';
 import { DonutChart, PerformanceChart, Sparkline } from '../../components/DataVisualization';
 import LiveTimer from '../../components/LiveTimer';
 import DateUtils from '../../utils/dateUtils';
@@ -129,13 +131,14 @@ const SectionCard = ({ title, action, children, className = '' }) => (
 	</section>
 );
 
-function ManagerDashboard({ jobs, users, currentUser, onRefresh, dashboardStats }) {
+const ManagerDashboard = memo(function ManagerDashboard({ jobs, users, currentUser, onRefresh, dashboardStats }) {
 	const [selectedJob, setSelectedJob] = useState(null);
 	const [jobDetails, setJobDetails] = useState(null);
 	const [detailsError, setDetailsError] = useState('');
 	const [detailsLoading, setDetailsLoading] = useState(false);
 	const [dateFilter, setDateFilter] = useState('today');
 	const [autoRefresh, setAutoRefresh] = useState(true);
+	const toast = useToast();
 
 	useEffect(() => {
 		if (!autoRefresh || selectedJob) return undefined;
@@ -312,17 +315,17 @@ function ManagerDashboard({ jobs, users, currentUser, onRefresh, dashboardStats 
 		const detailJob = jobDetails?.job || jobDetails || selectedJob;
 		const jobId = detailJob?.id || detailJob?._id;
 		if (!jobId) {
-			alert('Job ID not found');
+			toast.error('Job ID not found');
 			return;
 		}
 		try {
 			let message = '';
 			if (action === 'start') {
 				await V2.put(`/jobs/${jobId}/start`, { userId: currentUser?.id });
-				message = 'Timer started';
+				message = 'Timer started successfully';
 			} else if (action === 'stop') {
 				await V2.put(`/jobs/${jobId}/stop`, { userId: currentUser?.id });
-				message = 'Timer stopped';
+				message = 'Timer stopped successfully';
 			} else if (action === 'complete') {
 				await V2.put(`/jobs/${jobId}/complete`, { userId: currentUser?.id, completedAt: new Date().toISOString() });
 				message = 'Job marked complete';
@@ -332,11 +335,11 @@ function ManagerDashboard({ jobs, users, currentUser, onRefresh, dashboardStats 
 			}
 			await onRefresh?.();
 			closeJobDetails();
-			if (message) alert(message);
+			if (message) toast.success(message);
 		} catch (err) {
-			alert(err.response?.data?.error || err.message || 'Action failed');
+			toast.error(err.response?.data?.error || err.message || 'Action failed');
 		}
-	}, [jobDetails, selectedJob, currentUser?.id, onRefresh, closeJobDetails]);
+	}, [jobDetails, selectedJob, currentUser?.id, onRefresh, closeJobDetails, toast]);
 
 	const metricCards = useMemo(() => ([
 		{
@@ -455,7 +458,7 @@ function ManagerDashboard({ jobs, users, currentUser, onRefresh, dashboardStats 
 			<div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
 				<SectionCard
 					title="PERFORMANCE TREND"
-					className="xl:col-span-2"
+					className="xl:col-span-2 x-card--premium"
 					action={<span className="text-xs x-text-subtle">Last 7 days</span>}
 				>
 					<PerformanceChart data={performanceSeries} height={220} color="#38bdf8" showGrid />
@@ -793,6 +796,46 @@ function ManagerDashboard({ jobs, users, currentUser, onRefresh, dashboardStats 
 			) : null}
 		</div>
 	);
-}
+});
+
+ManagerDashboard.propTypes = {
+	jobs: PropTypes.oneOfType([
+		PropTypes.arrayOf(PropTypes.shape({
+			id: PropTypes.string,
+			_id: PropTypes.string,
+			status: PropTypes.string,
+			vin: PropTypes.string,
+			stockNumber: PropTypes.string,
+			vehicleDescription: PropTypes.string,
+			make: PropTypes.string,
+			model: PropTypes.string,
+			year: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+			serviceType: PropTypes.string,
+			technicianName: PropTypes.string,
+			technicianId: PropTypes.string,
+			salesPerson: PropTypes.string,
+			priority: PropTypes.string,
+			startTime: PropTypes.string,
+			startedAt: PropTypes.string,
+			completedAt: PropTypes.string,
+			date: PropTypes.string,
+			createdAt: PropTypes.string,
+			assignedTo: PropTypes.string
+		})),
+		PropTypes.object
+	]).isRequired,
+	users: PropTypes.object,
+	currentUser: PropTypes.shape({
+		id: PropTypes.string,
+		name: PropTypes.string,
+		role: PropTypes.string
+	}),
+	onRefresh: PropTypes.func,
+	dashboardStats: PropTypes.shape({
+		totalCompleted: PropTypes.number
+	})
+};
+
+ManagerDashboard.displayName = 'ManagerDashboard';
 
 export default ManagerDashboard;

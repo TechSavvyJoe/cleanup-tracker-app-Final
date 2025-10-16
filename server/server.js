@@ -11,6 +11,11 @@ const rateLimit = require('express-rate-limit');
 const Vehicle = require('./models/Vehicle');
 const { getInventoryCsvUrl } = require('./utils/inventorySource');
 
+// Import utilities and middleware
+const logger = require('./utils/logger');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const { requestLogger, performanceMonitor } = require('./middleware/requestLogger');
+
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '', 10) || (isProduction ? 100 : 1000);
@@ -80,6 +85,10 @@ app.use(cors(corsOptions));
 app.use(bodyParser.json({ limit: UPLOAD_LIMIT }));
 app.use(bodyParser.urlencoded({ extended: true, limit: UPLOAD_LIMIT }));
 
+// Request logging and performance monitoring
+app.use(requestLogger);
+app.use(performanceMonitor(2000)); // Log requests slower than 2 seconds
+
 // DB Config
 const configDb = require('./config/keys').mongoURI;
 
@@ -87,16 +96,16 @@ const configDb = require('./config/keys').mongoURI;
 async function connectDb() {
   try {
     await mongoose.connect(configDb, { serverSelectionTimeoutMS: 3000 });
-    console.log('MongoDB Connected');
+    logger.startup('MongoDB Connected', { uri: configDb.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@') });
   } catch (err) {
     if (process.env.NODE_ENV === 'production') {
-      console.error('MongoDB connection failed in production. Set MONGO_URI env. Error:', err.message);
+      logger.error('MongoDB connection failed in production', { error: err.message });
       process.exit(1);
     }
-    console.warn('Local MongoDB not available, starting in-memory MongoDB. Error:', err.message);
+    logger.warn('Local MongoDB not available, starting in-memory MongoDB', { error: err.message });
     try {
       const { MongoMemoryServer } = require('mongodb-memory-server');
-      console.log('Spinning up in-memory MongoDB instance...');
+      logger.info('Spinning up in-memory MongoDB instance...');
       const mongod = await MongoMemoryServer.create({
         instance: {
           dbName: 'cleanup-tracker',
@@ -108,9 +117,9 @@ async function connectDb() {
       });
       const uri = mongod.getUri();
       await mongoose.connect(uri, { serverSelectionTimeoutMS: 3000 });
-      console.log('Connected to in-memory MongoDB');
+      logger.startup('Connected to in-memory MongoDB', { dbName: 'cleanup-tracker' });
     } catch (memErr) {
-      console.error('Failed to start in-memory MongoDB:', memErr);
+      logger.error('Failed to start in-memory MongoDB', { error: memErr.message, stack: memErr.stack });
       process.exit(1);
     }
   }
@@ -141,12 +150,16 @@ const clientBuildPath = fs.existsSync(path.join(__dirname, 'client', 'build'))
   ? path.join(__dirname, 'client', 'build')
   : path.resolve(__dirname, '..', 'client', 'build');
 
-console.log('Serving static files from:', clientBuildPath);
+logger.info('Serving static files', { path: clientBuildPath });
 
 app.use(express.static(clientBuildPath));
 app.get('*', (req, res) => {
   res.sendFile(path.join(clientBuildPath, 'index.html'));
 });
+
+// Error handling middleware (must be last)
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 // Try to listen on process.env.PORT or default 5051, increment on conflict
 let startPort = parseInt(process.env.PORT, 10) || 5051;
@@ -156,10 +169,10 @@ async function seedUsersIfNeeded() {
   const V2User = require("./models/V2User");
   const count = await V2User.countDocuments();
   if (count > 0) {
-    console.log(`Users already seeded (${count} users found)`);
+    logger.info('Users already seeded', { count });
     return;
   }
-  console.log("No users found. Seeding default users...");
+  logger.info('No users found. Seeding default users...');
   const defaultUsers = [
     { name: "Joe Gallant", role: "manager", pin: "1701", employeeNumber: "MGR001", phoneNumber: "555-0001" },
     { name: "Alfred", role: "detailer", pin: "1716", uid: "detailer-001", employeeNumber: "DET001", phoneNumber: "555-0002" },
@@ -168,14 +181,14 @@ async function seedUsersIfNeeded() {
     { name: "Mike Chen", role: "salesperson", pin: "2002", employeeNumber: "SALES002", phoneNumber: "555-0102" },
     { name: "Lisa Rodriguez", role: "salesperson", pin: "2003", employeeNumber: "SALES003", phoneNumber: "555-0103" }
   ];
-  
+
   // Use save() instead of insertMany() to trigger pre-save hooks for PIN hashing
   for (const userData of defaultUsers) {
     const user = new V2User(userData);
     await user.save();
   }
-  
-  console.log(`Seeded ${defaultUsers.length} default users`);
+
+  logger.startup('Seeded default users', { count: defaultUsers.length });
 }
 
 // Ensure DB is connected before starting the HTTP server
@@ -184,41 +197,45 @@ async function main() {
   try {
     await seedUsersIfNeeded();
   } catch (e) {
-    console.warn("User seeding failed:", e.message);
+    logger.warn('User seeding failed', { error: e.message });
   }
   try {
     await fetchAndImportInventory();
   } catch (e) {
-    console.warn('Inventory import skipped/failed:', e.message);
+    logger.warn('Inventory import skipped/failed', { error: e.message });
   }
   startServer(startPort);
 }
 
 main().catch(err => {
-  console.error('Fatal startup error:', err);
+  logger.error('Fatal startup error', { error: err.message, stack: err.stack });
   process.exit(1);
 });
 const maxPort = startPort + 100;
 
 function startServer(portToTry) {
   const serverInstance = app.listen(portToTry, () => {
-    console.log(`Server started on port ${portToTry}`);
+    logger.startup(`Server started on port ${portToTry}`, {
+      port: portToTry,
+      environment: process.env.NODE_ENV || 'development',
+      nodeVersion: process.version
+    });
     // Removed .port file writing as it causes permission errors in Docker
     // and is not necessary for the application to function
   });
 
   serverInstance.on('error', err => {
     if (err.code === 'EADDRINUSE') {
-      console.warn(`Port ${portToTry} in use, trying ${portToTry + 1}`);
+      logger.warn(`Port ${portToTry} in use, trying ${portToTry + 1}`);
       serverInstance.close?.();
       if (portToTry + 1 <= maxPort) {
         startServer(portToTry + 1);
       } else {
-        console.error('No available ports found');
+        logger.error('No available ports found', { maxPort });
         process.exit(1);
       }
     } else {
-      console.error('Server error:', err);
+      logger.error('Server error', { error: err.message, code: err.code, stack: err.stack });
       process.exit(1);
     }
   });
@@ -230,7 +247,7 @@ function startServer(portToTry) {
 const csv = require('csv-parser');
 async function fetchAndImportInventory() {
   const SHEET_URL = getInventoryCsvUrl();
-  console.log('Fetching inventory CSV from', SHEET_URL);
+  logger.info('Fetching inventory CSV', { url: SHEET_URL });
   const response = await axios.get(SHEET_URL, { responseType: 'stream' });
   const headerMap = {
     0: 'newUsed', 1: 'stockNumber', 2: 'vehicle', 3: 'year', 4: 'make', 5: 'model',
@@ -244,7 +261,10 @@ async function fetchAndImportInventory() {
       .on('error', reject)
       .on('end', resolve);
   });
-  if (!rows.length) { console.warn('Inventory CSV empty.'); return; }
+  if (!rows.length) {
+    logger.warn('Inventory CSV empty');
+    return;
+  }
   const cleanInt = (v) => { const n = parseInt(String(v || '').replace(/[^0-9-]/g, ''), 10); return Number.isNaN(n) ? null : n; };
   const cleanStr = (v) => (v == null ? '' : String(v).trim());
   const cleanPrice = (v) => (v == null ? '' : String(v).replace(/[^0-9.]/g, '').trim());
@@ -257,8 +277,15 @@ async function fetchAndImportInventory() {
     };
     return { updateOne: { filter: { vin: doc.vin }, update: { $set: doc }, upsert: true } };
   });
-  if (!ops.length) { console.warn('No VIN rows found in inventory CSV.'); return; }
+  if (!ops.length) {
+    logger.warn('No VIN rows found in inventory CSV');
+    return;
+  }
   const result = await Vehicle.bulkWrite(ops, { ordered: false });
   const total = await Vehicle.countDocuments();
-  console.log(`Inventory import done. upserted=${result.upsertedCount || 0}, modified=${result.modifiedCount || 0}, total=${total}`);
+  logger.startup('Inventory import completed', {
+    upserted: result.upsertedCount || 0,
+    modified: result.modifiedCount || 0,
+    total
+  });
 }

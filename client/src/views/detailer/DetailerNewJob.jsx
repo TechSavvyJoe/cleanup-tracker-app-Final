@@ -1,17 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import VinScanner from '../../components/VinScanner';
 import { useToast } from '../../components/Toast';
 import { V2 } from '../../utils/v2Client';
 import DateUtils from '../../utils/dateUtils';
+import {
+  ensureServiceTypeCatalog,
+  DEFAULT_SERVICE_TYPES,
+  formatExpectedMinutes
+} from '../../utils/serviceTypes';
 
-function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm, setSearchTerm, showScanner, setShowScanner, onScanSuccess, hasSearched, onJobCreated }) {
+function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm, setSearchTerm, showScanner, setShowScanner, onScanSuccess, hasSearched, onJobCreated, serviceTypesCatalog }) {
   const toast = useToast();
   const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [serviceType, setServiceType] = useState('Detail');
   const [salesPerson, setSalesPerson] = useState('');
   const [salespersons, setSalespersons] = useState([]);
 
-  const serviceTypes = ['Detail', 'Delivery', 'Rewash', 'Lot Car', 'FCTP', 'Cleanup', 'Showroom'];
+  const serviceCatalog = useMemo(
+    () => ensureServiceTypeCatalog(serviceTypesCatalog || DEFAULT_SERVICE_TYPES),
+    [serviceTypesCatalog]
+  );
+  const activeServiceTypes = useMemo(
+    () => serviceCatalog.filter((type) => type.isActive !== false),
+    [serviceCatalog]
+  );
+  const [selectedServiceTypeId, setSelectedServiceTypeId] = useState(() => activeServiceTypes[0]?.id || serviceCatalog[0]?.id || '');
+  const selectedServiceType = useMemo(() => {
+    if (activeServiceTypes.length === 0) {
+      return null;
+    }
+    return activeServiceTypes.find((type) => type.id === selectedServiceTypeId) || activeServiceTypes[0];
+  }, [activeServiceTypes, selectedServiceTypeId]);
 
   // Fetch salespersons
   useEffect(() => {
@@ -32,6 +50,15 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
     onSearch(searchTerm);
   };
 
+  useEffect(() => {
+    setSelectedServiceTypeId((prev) => {
+      if (activeServiceTypes.some((type) => type.id === prev)) {
+        return prev;
+      }
+      return activeServiceTypes[0]?.id || '';
+    });
+  }, [activeServiceTypes]);
+
   // Auto-select when exactly one result
   useEffect(() => {
     if (searchResults && searchResults.length === 1) {
@@ -46,8 +73,8 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
       return;
     }
 
-    if (!serviceType || serviceType.trim() === '') {
-      toast.error('Please select a service type');
+    if (!selectedServiceType) {
+      toast.error('No active service types are configured');
       return;
     }
 
@@ -59,13 +86,16 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
     try {
       toast.info('Creating job...');
       const now = new Date();
+      const resolvedServiceType = selectedServiceType?.name || 'Cleanup';
+      const resolvedExpectedMinutes = selectedServiceType?.expectedMinutes || 60;
       const newJob = {
         technicianId: user.id,
         technicianName: user.name,
         vin: selectedVehicle.vin,
         stockNumber: selectedVehicle.stockNumber,
         vehicleDescription: `${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model}`,
-        serviceType: serviceType,
+        serviceType: resolvedServiceType,
+        expectedDuration: resolvedExpectedMinutes,
         salesPerson: salesPerson.trim() || '',
         assignedTechnicianIds: [user.id],
         status: 'In Progress',
@@ -87,6 +117,9 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
       setSelectedVehicle(null);
       setSearchTerm('');
       setSalesPerson('');
+      if (activeServiceTypes.length > 0) {
+        setSelectedServiceTypeId(activeServiceTypes[0].id);
+      }
 
       // Refresh job data and navigate to dashboard
       if (onJobCreated) {
@@ -211,14 +244,26 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
             <div className="mt-4">
               <label className="block text-blue-800 font-medium mb-2">Service Type</label>
               <select
-                value={serviceType}
-                onChange={(e) => setServiceType(e.target.value)}
+                value={selectedServiceTypeId}
+                onChange={(e) => setSelectedServiceTypeId(e.target.value)}
                 className="w-full bg-black text-white border border-gray-700 rounded-lg py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {serviceTypes.map(type => (
-                  <option key={type} value={type}>{type}</option>
+                {activeServiceTypes.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name} • {formatExpectedMinutes(type.expectedMinutes)}
+                  </option>
                 ))}
               </select>
+              {selectedServiceType && (
+                <p className="mt-2 text-xs text-blue-200">
+                  Target completion: {formatExpectedMinutes(selectedServiceType.expectedMinutes)}
+                </p>
+              )}
+              {activeServiceTypes.length === 0 && (
+                <p className="mt-2 text-xs text-red-300">
+                  No active service types are configured. Ask a manager to publish the service catalog.
+                </p>
+              )}
             </div>
 
             <div className="mt-4">
@@ -243,7 +288,7 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
                       type="button"
                       onClick={() => {
                         const phone = salespersons.find(p => p.name === salesPerson)?.phone;
-                        const message = `New job assigned: ${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model} - ${serviceType}`;
+                        const message = `New job assigned: ${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model} - ${selectedServiceType?.name || 'Service'}`;
                         window.open(`sms:${phone}?body=${encodeURIComponent(message)}`, '_blank');
                       }}
                       className="text-blue-600 hover:text-blue-800 text-sm underline"
@@ -257,7 +302,8 @@ function DetailerNewJob({ user, onSearch, searchResults, isSearching, searchTerm
 
             <button
               onClick={handleCreateJob}
-              className="w-full mt-4 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition-colors"
+              disabled={!selectedServiceType || activeServiceTypes.length === 0}
+              className={`w-full mt-4 rounded-lg py-3 px-4 font-bold transition-colors ${!selectedServiceType || activeServiceTypes.length === 0 ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white'}`}
             >
               Start Job
             </button>

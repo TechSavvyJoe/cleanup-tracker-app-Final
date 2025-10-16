@@ -5,7 +5,7 @@ import { useToast } from '../../components/Toast';
 const normalizeValue = (value) => (value ?? '').toString().trim().toLowerCase();
 
 const STATUS_KEYS = {
-  completed: ['completed', 'complete', 'done', 'finished'],
+  completed: ['completed', 'complete', 'done', 'finished', 'qc approved', 'qc-approved'],
   qc: ['qc required', 'qc_required', 'qc pending', 'pending qc', 'needs qc', 'quality control'],
   failed: ['failed qc', 'qc failed', 'rejected', 'fail qc', 'failed', 'qc issue'],
   active: ['in progress', 'in_progress', 'active', 'assigned', 'started', 'pending', 'scheduled']

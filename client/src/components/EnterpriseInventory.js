@@ -1,6 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { v2Request } from '../utils/v2Client';
 import { useToast } from './Toast';
+import {
+  ensureServiceTypeCatalog,
+  DEFAULT_SERVICE_TYPES,
+  formatExpectedMinutes
+} from '../utils/serviceTypes';
 
 const EnterpriseInventory = ({
   theme = 'dark',
@@ -8,7 +13,8 @@ const EnterpriseInventory = ({
   onEditVehicle,
   onPrintVehicle,
   currentUser,
-  onVehicleUpdated
+  onVehicleUpdated,
+  serviceTypes = DEFAULT_SERVICE_TYPES
 }) => {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,9 +28,41 @@ const EnterpriseInventory = ({
   const [jobLoadingId, setJobLoadingId] = useState(null);
   const [editVehicleData, setEditVehicleData] = useState(null);
   const [isSavingVehicle, setIsSavingVehicle] = useState(false);
+  const [viewDensity, setViewDensity] = useState('cozy');
+  const [selectedServiceTypeId, setSelectedServiceTypeId] = useState('');
   const toast = useToast();
 
+  const serviceCatalog = useMemo(
+    () => ensureServiceTypeCatalog(serviceTypes || DEFAULT_SERVICE_TYPES),
+    [serviceTypes]
+  );
+  const activeServiceTypes = useMemo(
+    () => serviceCatalog.filter((type) => type.isActive !== false),
+    [serviceCatalog]
+  );
+  const selectedServiceType = useMemo(() => {
+    if (!activeServiceTypes.length) {
+      return null;
+    }
+    const match = activeServiceTypes.find((type) => type.id === selectedServiceTypeId);
+    return match || activeServiceTypes[0];
+  }, [activeServiceTypes, selectedServiceTypeId]);
+
+  useEffect(() => {
+    if (!activeServiceTypes.length) {
+      setSelectedServiceTypeId('');
+      return;
+    }
+    setSelectedServiceTypeId((prev) => {
+      if (prev && activeServiceTypes.some((type) => type.id === prev)) {
+        return prev;
+      }
+      return activeServiceTypes[0].id;
+    });
+  }, [activeServiceTypes]);
+
   const statusOptions = useMemo(() => ([
+    { value: 'all', label: 'All Status' },
     { value: 'available', label: 'Available' },
     { value: 'in-service', label: 'In Service' },
     { value: 'maintenance', label: 'Maintenance' },
@@ -40,24 +78,58 @@ const EnterpriseInventory = ({
   const mileageFormatter = useMemo(() => new Intl.NumberFormat('en-US'), []);
 
   const getVehicleIdentifier = (vehicle) => {
-    if (!vehicle) return null;
+    if (!vehicle) {
+      return null;
+    }
     return vehicle._id || vehicle.id || vehicle.vin || vehicle.stockNumber || null;
   };
 
+  const getArrivalTimestamp = (vehicle = {}) =>
+    vehicle.arrivalDate || vehicle.acquiredAt || vehicle.checkInDate || vehicle.createdAt || vehicle.date || vehicle.updatedAt;
+
+  const calculateDaysInInventory = useCallback((vehicle) => {
+    const arrival = getArrivalTimestamp(vehicle);
+    if (!arrival) {
+      return null;
+    }
+    const arrivalDate = new Date(arrival);
+    if (Number.isNaN(arrivalDate.getTime())) {
+      return null;
+    }
+    const now = new Date();
+    const diffMs = now.getTime() - arrivalDate.getTime();
+    if (diffMs < 0) {
+      return 0;
+    }
+    return Math.round(diffMs / (1000 * 60 * 60 * 24));
+  }, []);
+
   const normalizeStatus = (status) => {
-    if (!status) return '';
-    return status.toString().trim().toLowerCase().replace(/\s+/g, '-');
+    if (!status) {
+      return '';
+    }
+    return status
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-');
   };
 
   const buildVehicleTitle = (vehicle) => {
-    if (!vehicle) return 'Vehicle';
+    if (!vehicle) {
+      return 'Vehicle';
+    }
     const composed = [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(' ').trim();
-    if (composed) return composed;
+    if (composed) {
+      return composed;
+    }
     return vehicle.vehicle || 'Vehicle';
   };
 
   const formatStatusLabel = (status) => {
-    if (!status) return 'Unknown';
+    if (!status) {
+      return 'Unknown';
+    }
     return status
       .toString()
       .replace(/[-_]/g, ' ')
@@ -67,9 +139,13 @@ const EnterpriseInventory = ({
   };
 
   const sanitizePriceForPayload = (value) => {
-    if (value == null) return '';
+    if (value == null) {
+      return '';
+    }
     const numeric = String(value).replace(/[^0-9.]/g, '');
-    if (!numeric) return '';
+    if (!numeric) {
+      return '';
+    }
     const parsed = Number(numeric);
     if (!Number.isFinite(parsed)) {
       return String(value).trim();
@@ -79,14 +155,35 @@ const EnterpriseInventory = ({
   };
 
   const sanitizeOdometerForPayload = (value) => {
-    if (value == null) return '';
+    if (value == null) {
+      return '';
+    }
     const numeric = String(value).replace(/[^0-9]/g, '');
-    if (!numeric) return '';
+    if (!numeric) {
+      return '';
+    }
     const parsed = Number(numeric);
     if (!Number.isFinite(parsed)) {
       return String(value).trim();
     }
     return parsed.toLocaleString('en-US');
+  };
+
+  const asNumber = (value) => {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === 'number') {
+      if (Number.isFinite(value)) {
+        return value;
+      }
+      return null;
+    }
+    const cleaned = Number(String(value).replace(/[^0-9.-]/g, ''));
+    if (Number.isFinite(cleaned)) {
+      return cleaned;
+    }
+    return null;
   };
 
   // Load vehicles data
@@ -104,7 +201,9 @@ const EnterpriseInventory = ({
         });
 
         const payload = response?.data;
-        if (!isActive) return;
+        if (!isActive) {
+          return;
+        }
 
         if (Array.isArray(payload)) {
           setVehicles(payload);
@@ -114,7 +213,9 @@ const EnterpriseInventory = ({
           throw new Error('Invalid response format');
         }
       } catch (err) {
-        if (!isActive) return;
+        if (!isActive) {
+          return;
+        }
         console.error('Failed to load vehicles:', err);
         setError(err.message || 'Failed to load vehicles');
       } finally {
@@ -148,7 +249,8 @@ const EnterpriseInventory = ({
         vehicle.model?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         vehicle.year?.toString().includes(searchTerm);
 
-      const matchesStatus = statusFilter === 'all' || vehicle.status?.toLowerCase() === statusFilter.toLowerCase();
+      const matchesStatus =
+        statusFilter === 'all' || normalizeStatus(vehicle.status) === statusFilter;
 
       return matchesSearch && matchesStatus;
     });
@@ -163,17 +265,274 @@ const EnterpriseInventory = ({
         bVal = parseInt(bVal) || 0;
       }
 
-      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      if (aVal < bVal) {
+        return sortOrder === 'asc' ? -1 : 1;
+      }
+      if (aVal > bVal) {
+        return sortOrder === 'asc' ? 1 : -1;
+      }
       return 0;
     });
 
     return filtered;
   }, [vehicles, searchTerm, statusFilter, sortBy, sortOrder]);
 
+  const groupedVehicles = useMemo(() => {
+    const groups = {
+      available: [],
+      'in-service': [],
+      maintenance: [],
+      sold: [],
+      backlog: []
+    };
+
+    filteredAndSortedVehicles.forEach(vehicle => {
+      const normalizedStatus = normalizeStatus(vehicle.status);
+      if (groups[normalizedStatus]) {
+        groups[normalizedStatus].push(vehicle);
+      } else {
+        groups.backlog.push(vehicle);
+      }
+    });
+
+    return groups;
+  }, [filteredAndSortedVehicles]);
+
+  const boardColumns = useMemo(() => {
+    const descriptors = [
+      {
+        key: 'available',
+        label: 'Frontline Ready',
+        helper: 'Ready for sale or pickup',
+        accent: 'from-sky-500/20 via-sky-400/5 to-transparent',
+        chipClass: 'border border-sky-400/40 bg-sky-500/10 text-sky-200'
+      },
+      {
+        key: 'in-service',
+        label: 'Currently In Service',
+        helper: 'Active detail or wash jobs',
+        accent: 'from-amber-500/20 via-amber-400/5 to-transparent',
+        chipClass: 'border border-amber-400/40 bg-amber-500/10 text-amber-200'
+      },
+      {
+        key: 'maintenance',
+        label: 'Maintenance Hold',
+        helper: 'Waiting on parts or QC',
+        accent: 'from-rose-500/15 via-rose-400/5 to-transparent',
+        chipClass: 'border border-rose-400/40 bg-rose-500/10 text-rose-200'
+      },
+      {
+        key: 'sold',
+        label: 'Sold & Delivered',
+        helper: 'Awaiting paperwork or transport',
+        accent: 'from-emerald-500/15 via-emerald-400/5 to-transparent',
+        chipClass: 'border border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+      },
+      {
+        key: 'backlog',
+        label: 'Needs Categorization',
+        helper: 'Missing status or onboarding',
+        accent: 'from-slate-500/20 via-slate-400/5 to-transparent',
+        chipClass: 'border border-slate-400/40 bg-slate-500/10 text-slate-200'
+      }
+    ];
+
+    return descriptors.map(descriptor => ({
+      ...descriptor,
+      vehicles: groupedVehicles[descriptor.key] || []
+    }));
+  }, [groupedVehicles]);
+
+  const totalInventoryValue = useMemo(() => filteredAndSortedVehicles.reduce((sum, vehicle) => {
+    const numeric = asNumber(vehicle.price);
+    if (!numeric) {
+      return sum;
+    }
+    return sum + numeric;
+  }, 0), [filteredAndSortedVehicles]);
+
+  const averageDaysInInventory = useMemo(() => {
+    const samples = filteredAndSortedVehicles
+      .map(calculateDaysInInventory)
+      .filter(value => value != null);
+    if (!samples.length) {
+      return null;
+    }
+    const total = samples.reduce((sum, value) => sum + value, 0);
+    return Math.round(total / samples.length);
+  }, [filteredAndSortedVehicles, calculateDaysInInventory]);
+
+  const newArrivalsCount = useMemo(() => {
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return filteredAndSortedVehicles.filter(vehicle => {
+      const arrival = getArrivalTimestamp(vehicle);
+      if (!arrival) {
+        return false;
+      }
+      const arrivalDate = new Date(arrival);
+      if (Number.isNaN(arrivalDate.getTime())) {
+        return false;
+      }
+      return now - arrivalDate.getTime() <= oneWeekMs;
+    }).length;
+  }, [filteredAndSortedVehicles]);
+
+  const metricTiles = useMemo(() => ([
+    {
+      key: 'total',
+      label: 'Vehicles In View',
+      value: filteredAndSortedVehicles.length.toLocaleString(),
+      description: `${vehicles.length.toLocaleString()} total records`
+    },
+    {
+      key: 'value',
+      label: 'Total Asking Value',
+      value: totalInventoryValue ? currencyFormatter.format(totalInventoryValue) : '—',
+      description: 'Active filter selection'
+    },
+    {
+      key: 'frontline',
+      label: 'Frontline Ready',
+      value: groupedVehicles.available.length.toLocaleString(),
+      description: `${newArrivalsCount} arrivals in last 7 days`
+    },
+    {
+      key: 'aging',
+      label: 'Avg Days In Inventory',
+      value: averageDaysInInventory != null ? `${averageDaysInInventory}d` : '—',
+      description: averageDaysInInventory != null ? 'Since arrival/check-in' : 'Arrival data missing'
+    }
+  ]), [
+    filteredAndSortedVehicles.length,
+    vehicles.length,
+    totalInventoryValue,
+    currencyFormatter,
+    groupedVehicles.available.length,
+    newArrivalsCount,
+    averageDaysInInventory
+  ]);
+
+  const renderVehicleCard = (vehicle, columnKey, index = 0) => {
+    const fallbackId = `vehicle-${columnKey}-${index}`;
+    const vehicleId = getVehicleIdentifier(vehicle) || fallbackId;
+    const vehicleTitle = buildVehicleTitle(vehicle);
+    const vinSuffix = vehicle?.vin ? String(vehicle.vin).slice(-8).toUpperCase() : null;
+    const statusLabel = formatStatusLabel(vehicle.status);
+    const priceValue = asNumber(vehicle.price);
+    const priceLabel = priceValue != null ? currencyFormatter.format(priceValue) : '—';
+    const mileageValue = asNumber(vehicle.mileage ?? vehicle.odometer);
+    const mileageLabel = mileageValue != null ? `${mileageFormatter.format(mileageValue)} mi` : '—';
+    const locationLabel = vehicle.location || vehicle.lot || 'Lot TBD';
+    const daysInInventory = calculateDaysInInventory(vehicle);
+    const daysLabel = daysInInventory != null ? `${daysInInventory} day${daysInInventory === 1 ? '' : 's'}` : 'Untracked';
+    const updatedTimestamp = vehicle.updatedAt || vehicle.timestamp || vehicle.modifiedAt || vehicle.date;
+    let updatedLabel = '—';
+    if (updatedTimestamp) {
+      const updatedDate = new Date(updatedTimestamp);
+      if (!Number.isNaN(updatedDate.getTime())) {
+        updatedLabel = updatedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+    }
+    const isJobCreating = Boolean(vehicleId && jobLoadingId === vehicleId);
+    const editingTargetId = editVehicleData?.id || editVehicleData?._id || editVehicleData?.vin || editVehicleData?.stockNumber;
+    const isEditing = Boolean(editingTargetId && vehicleId && editingTargetId === vehicleId);
+
+    const paddingClass = viewDensity === 'compact' ? 'p-4' : 'p-6';
+    const metaGapClass = viewDensity === 'compact' ? 'gap-3 text-[0.8rem]' : 'gap-4 text-sm';
+
+    return (
+      <article
+        key={vehicleId}
+        onClick={() => setSelectedVehicle(vehicle)}
+        className={`group relative cursor-pointer overflow-hidden rounded-2xl border border-[color:var(--x-border)] bg-black/35 backdrop-blur-sm transition-transform duration-200 hover:-translate-y-1 hover:border-[color:var(--x-blue)] ${paddingClass}`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-[0.65rem] uppercase tracking-[0.16em] text-[color:var(--x-text-secondary)]">
+              {vinSuffix ? `VIN • ${vinSuffix}` : 'VIN pending'}
+            </p>
+            <h4 className="text-lg font-semibold text-white sm:text-xl">{vehicleTitle}</h4>
+          </div>
+          <div className="text-right">
+            <p className="text-[0.65rem] uppercase tracking-[0.16em] text-[color:var(--x-text-secondary)]">Ask</p>
+            <p className="text-xl font-semibold text-white">{priceLabel}</p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${getStatusColor(statusLabel)}`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-white" />
+            {statusLabel}
+          </span>
+          <span className="x-badge bg-black/20">{locationLabel}</span>
+          <span className="x-badge bg-black/20">Age • {daysLabel}</span>
+        </div>
+
+        <div className={`mt-4 grid grid-cols-2 ${metaGapClass}`}>
+          <div>
+            <p className="text-[0.65rem] uppercase tracking-[0.12em] text-[color:var(--x-text-secondary)]">Mileage</p>
+            <p className="font-semibold text-white">{mileageLabel}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[0.65rem] uppercase tracking-[0.12em] text-[color:var(--x-text-secondary)]">Updated</p>
+            <p className="font-semibold text-white">{updatedLabel}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[0.65rem] uppercase tracking-[0.16em] text-[color:var(--x-text-secondary)]">
+            {vehicle.detailPackage ? `Package • ${vehicle.detailPackage}` : 'Package TBD'}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.12em] ${selectedServiceType ? 'border-[color:var(--x-border)] text-[color:var(--x-text-secondary)] bg-black/40' : 'border-red-500/60 text-red-200 bg-red-500/10'}`}
+            >
+              {selectedServiceType
+                ? `${selectedServiceType.name} • ${formatExpectedMinutes(selectedServiceType.expectedMinutes)}`
+                : 'No active services'}
+            </span>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleCreateJobClick(vehicle);
+              }}
+              disabled={isJobCreating || !selectedServiceType}
+              className="rounded-full bg-[color:var(--x-blue)] px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-black transition hover:bg-[color:var(--x-blue-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isJobCreating ? 'Creating…' : 'Launch Job'}
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleEditVehicleClick(vehicle);
+              }}
+              className="rounded-full border border-[color:var(--x-border)] bg-black/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition hover:border-[color:var(--x-blue)] hover:text-[color:var(--x-blue)]"
+            >
+              {isEditing ? 'Editing…' : 'Open Sheet'}
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                handlePrintVehicle(vehicle);
+              }}
+              className="rounded-full border border-[color:var(--x-border)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--x-text-secondary)] transition hover:border-[color:var(--x-blue)] hover:text-[color:var(--x-blue)]"
+            >
+              Print Spec
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  };
+
   // Get status color
   const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
+    const normalized = normalizeStatus(status);
+    switch (normalized) {
       case 'available':
         return 'border-emerald-400/70 bg-emerald-500/15 text-emerald-200';
       case 'in-service':
@@ -186,18 +545,14 @@ const EnterpriseInventory = ({
         return 'border-sky-400/60 bg-sky-500/15 text-sky-200';
     }
   };
-
-  const asNumber = (value) => {
-    if (value == null) return null;
-    if (typeof value === 'number') {
-      return Number.isFinite(value) ? value : null;
-    }
-    const cleaned = Number(String(value).replace(/[^0-9.-]/g, ''));
-    return Number.isFinite(cleaned) ? cleaned : null;
-  };
-
   const handleCreateJobClick = async (vehicle) => {
-    if (!vehicle) return;
+    if (!vehicle) {
+      return;
+    }
+    if (!selectedServiceType) {
+      toast.error('No active service types are configured. Publish the catalog in Settings.');
+      return;
+    }
     const vehicleId = getVehicleIdentifier(vehicle);
     if (vehicleId && jobLoadingId === vehicleId) {
       return;
@@ -209,7 +564,11 @@ const EnterpriseInventory = ({
       }
 
       if (typeof onCreateJob === 'function') {
-        await onCreateJob(vehicle);
+        await onCreateJob(vehicle, {
+          selectedServiceType,
+          serviceCatalog,
+          activeServiceTypes
+        });
         return;
       }
 
@@ -221,7 +580,8 @@ const EnterpriseInventory = ({
         vin: vehicle.vin || 'UNKNOWN_VIN',
         stockNumber: vehicle.stockNumber || '',
         vehicleDescription: buildVehicleTitle(vehicle),
-        serviceType: 'Cleanup',
+        serviceType: selectedServiceType?.name || 'Cleanup',
+        expectedDuration: selectedServiceType?.expectedMinutes || 60,
         priority: 'Normal',
         year: vehicle.year || '',
         make: vehicle.make || '',
@@ -234,7 +594,7 @@ const EnterpriseInventory = ({
       if (typeof onVehicleUpdated === 'function') {
         onVehicleUpdated({ ...vehicle });
       }
-      toast.success(`Created job for ${buildVehicleTitle(vehicle)}.`);
+      toast.success(`Created ${selectedServiceType.name} job for ${buildVehicleTitle(vehicle)}.`);
     } catch (error) {
       const message = error?.response?.data?.error || error?.message || 'Failed to create job';
       toast.error(message);
@@ -245,12 +605,14 @@ const EnterpriseInventory = ({
   };
 
   const beginEditingVehicle = (vehicle) => {
-    if (!vehicle) return;
+    if (!vehicle) {
+      return;
+    }
     const identifier = getVehicleIdentifier(vehicle);
     setSelectedVehicle(vehicle);
     setEditVehicleData({
       id: identifier,
-  status: normalizeStatus(vehicle.status || 'available'),
+      status: normalizeStatus(vehicle.status || 'available'),
       price: vehicle.price ? String(vehicle.price) : '',
       odometer: vehicle.odometer || vehicle.mileage || '',
       color: vehicle.color || '',
@@ -281,6 +643,9 @@ const EnterpriseInventory = ({
       return;
     }
 
+    const priceNumeric = asNumber(vehicle?.price);
+    const mileageNumeric = asNumber(vehicle?.mileage ?? vehicle?.odometer);
+
     const rows = [
       ['Vehicle', `${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''}`.trim()],
       ['Trim', vehicle.trim || '—'],
@@ -289,8 +654,8 @@ const EnterpriseInventory = ({
       ['Status', vehicle.status || 'Unknown'],
       ['Color', vehicle.color || '—'],
       ['Location', vehicle.location || vehicle.lot || '—'],
-      ['Mileage', vehicle.mileage != null ? mileageFormatter.format(vehicle.mileage) : '—'],
-      ['Price', vehicle.price ? currencyFormatter.format(Number(vehicle.price)) : '—'],
+      ['Mileage', mileageNumeric != null ? `${mileageFormatter.format(mileageNumeric)} mi` : '—'],
+      ['Price', priceNumeric != null ? currencyFormatter.format(priceNumeric) : '—'],
     ];
 
     printWindow.document.write('<html><head><title>Vehicle Spec Sheet</title>');
@@ -310,7 +675,9 @@ const EnterpriseInventory = ({
 
   const handleEditFieldChange = (field, value) => {
     setEditVehicleData((prev) => {
-      if (!prev) return prev;
+      if (!prev) {
+        return prev;
+      }
       return {
         ...prev,
         [field]: value
@@ -320,7 +687,9 @@ const EnterpriseInventory = ({
 
   const handleVehicleSave = async (event) => {
     event?.preventDefault();
-    if (!selectedVehicle || !editVehicleData) return;
+    if (!selectedVehicle || !editVehicleData) {
+      return;
+    }
 
     const identifier = getVehicleIdentifier(selectedVehicle);
     if (!identifier) {
@@ -668,72 +1037,110 @@ const EnterpriseInventory = ({
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#0F172A', color: '#F1F5F9' }}>
-      <div className="p-6">
-        {/* Header */}
-        <div className="mb-8 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
+    <div className="min-h-screen bg-[#05070a] text-[color:var(--x-text-primary)]">
+      <div className="mx-auto flex max-w-[1680px] flex-col gap-10 px-4 pb-16 pt-8 sm:px-6 lg:px-12">
+        <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-3">
             <p className="text-[0.65rem] uppercase tracking-[0.24em] text-[color:var(--x-text-secondary)]">Operations Suite</p>
-            <h1 className="mt-3 text-3xl font-semibold text-white">Vehicle Inventory</h1>
-            <p className="mt-2 text-sm text-[color:var(--x-text-secondary)]">Search, prioritize, and action every vehicle in a single view.</p>
+            <h1 className="text-4xl font-semibold text-white">Enterprise Inventory Command</h1>
+            <p className="max-w-xl text-sm text-[color:var(--x-text-secondary)]">Monitor lifecycle, launch work orders, and keep frontline units customer-ready from one desktop view.</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-full border border-[color:var(--x-border)] bg-black/40 px-4 py-2 text-xs uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">
-              {filteredAndSortedVehicles.length} Active Records
+              {filteredAndSortedVehicles.length} In Frame
             </div>
             <div className="rounded-full border border-[color:var(--x-border)] bg-black/40 px-4 py-2 text-xs uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">
-              {Math.max(vehicles.length - filteredAndSortedVehicles.length, 0)} Hidden
+              {Math.max(vehicles.length - filteredAndSortedVehicles.length, 0)} Filtered Out
+            </div>
+            <div className="flex items-center gap-2 rounded-full border border-[color:var(--x-border)] bg-black/40 px-2 py-1">
+              <button
+                type="button"
+                onClick={() => setViewDensity('cozy')}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] transition ${viewDensity === 'cozy' ? 'bg-[color:var(--x-blue)] text-black' : 'text-[color:var(--x-text-secondary)] hover:text-white'}`}
+              >
+                Cozy
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewDensity('compact')}
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] transition ${viewDensity === 'compact' ? 'bg-[color:var(--x-blue)] text-black' : 'text-[color:var(--x-text-secondary)] hover:text-white'}`}
+              >
+                Dense
+              </button>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">
+                Launch Service
+              </label>
+              <select
+                value={selectedServiceTypeId}
+                onChange={(event) => setSelectedServiceTypeId(event.target.value)}
+                disabled={!activeServiceTypes.length}
+                className="min-w-[220px] rounded-full border border-[color:var(--x-border)] bg-black/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition focus:border-[color:var(--x-blue)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {activeServiceTypes.length === 0 && (
+                  <option value="">No active services</option>
+                )}
+                {activeServiceTypes.map((service) => (
+                  <option key={service.id} value={service.id}>
+                    {service.name} • {formatExpectedMinutes(service.expectedMinutes)}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-        </div>
+        </header>
 
-        {/* Controls */}
-        <div className="mb-8 rounded-3xl border border-[color:var(--x-border)] bg-[color:var(--x-surface)]/90 p-6">
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-4">
-            {/* Search */}
-            <div className="md:col-span-2">
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--x-text-secondary)]">Search Vehicles</label>
+        <section className="rounded-3xl border border-[color:var(--x-border)] bg-[color:var(--x-surface)]/80 p-6 shadow-[0_40px_100px_rgba(5,7,10,0.6)] lg:p-8">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
+            <div className="lg:col-span-2">
+              <label htmlFor="inventory-search" className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--x-text-secondary)]">
+                Search Fleet
+              </label>
               <div className="relative">
                 <svg className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--x-text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
+                  id="inventory-search"
                   type="text"
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search by VIN, stock #, make, model..."
-                  className="w-full rounded-full border border-[color:var(--x-border)] bg-black/40 py-3 pl-12 pr-6 text-sm text-white placeholder-[color:var(--x-text-secondary)] transition focus:border-[color:var(--x-primary)] focus:outline-none"
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Search by VIN, stock, make, model, color"
+                  className="w-full rounded-full border border-[color:var(--x-border)] bg-black/35 py-3 pl-12 pr-6 text-sm text-white placeholder-[color:var(--x-text-secondary)] transition focus:border-[color:var(--x-blue)] focus:outline-none"
                 />
               </div>
             </div>
 
-            {/* Status Filter */}
             <div>
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--x-text-secondary)]">Filter by Status</label>
+              <label htmlFor="inventory-status-filter" className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--x-text-secondary)]">
+                Filter Status
+              </label>
               <select
+                id="inventory-status-filter"
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full rounded-full border border-[color:var(--x-border)] bg-black/40 py-3 px-4 text-sm text-white transition focus:border-[color:var(--x-primary)] focus:outline-none"
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="w-full rounded-full border border-[color:var(--x-border)] bg-black/35 py-3 px-4 text-sm text-white transition focus:border-[color:var(--x-blue)] focus:outline-none"
               >
-                <option value="all">All Status</option>
-                <option value="available">Available</option>
-                <option value="in-service">In Service</option>
-                <option value="maintenance">Maintenance</option>
-                <option value="sold">Sold</option>
+                {statusOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </div>
 
-            {/* Sort */}
             <div>
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--x-text-secondary)]">Sort By</label>
+              <label htmlFor="inventory-sort-order" className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--x-text-secondary)]">
+                Sort Sequence
+              </label>
               <select
+                id="inventory-sort-order"
                 value={`${sortBy}-${sortOrder}`}
-                onChange={(e) => {
-                  const [field, order] = e.target.value.split('-');
+                onChange={(event) => {
+                  const [field, order] = event.target.value.split('-');
                   setSortBy(field);
                   setSortOrder(order);
                 }}
-                className="w-full rounded-full border border-[color:var(--x-border)] bg-black/40 py-3 px-4 text-sm text-white transition focus:border-[color:var(--x-primary)] focus:outline-none"
+                className="w-full rounded-full border border-[color:var(--x-border)] bg-black/35 py-3 px-4 text-sm text-white transition focus:border-[color:var(--x-blue)] focus:outline-none"
               >
                 <option value="updatedAt-desc">Recently Updated</option>
                 <option value="year-desc">Year (Newest)</option>
@@ -745,135 +1152,70 @@ const EnterpriseInventory = ({
             </div>
           </div>
 
-          {/* Summary */}
-          <div className="mt-5 flex flex-col gap-4 border-t border-[color:var(--x-border)] pt-5 md:flex-row md:items-center md:justify-between">
+          <div className="mt-6 flex flex-col gap-4 border-t border-[color:var(--x-border)] pt-5 lg:flex-row lg:items-center lg:justify-between">
             <span className="text-sm text-[color:var(--x-text-secondary)]">
-              Showing <span className="font-semibold text-white">{filteredAndSortedVehicles.length}</span> of <span className="font-semibold text-white">{vehicles.length}</span> total vehicles
+              Showing <span className="font-semibold text-white">{filteredAndSortedVehicles.length}</span> of <span className="font-semibold text-white">{vehicles.length}</span> vehicles
             </span>
-            <button
-              type="button"
-              onClick={() => setShowAddForm(true)}
-              className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-[color:var(--x-primary)] to-[color:var(--x-primary-soft)] px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-white shadow-lg shadow-[rgba(5,127,245,0.25)] transition hover:opacity-90"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-              </svg>
-              Add Vehicle
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full border border-[color:var(--x-border)] bg-black/30 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[color:var(--x-text-secondary)]">
+                {newArrivalsCount} arrivals in 7 days
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowAddForm(true)}
+                className="inline-flex items-center gap-2 rounded-full bg-[color:var(--x-blue)] px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-[color:var(--x-blue-hover)]"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Vehicle
+              </button>
+            </div>
           </div>
-        </div>
-  {/* Vehicle Table */}
-        <div className="rounded-3xl border border-[color:var(--x-border)] bg-[color:var(--x-surface)]/92 shadow-[0_32px_70px_rgba(5,6,8,0.65)]">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-[color:var(--x-border)]">
-              <thead className="bg-black/40">
-                <tr>
-                  <th scope="col" className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--x-text-secondary)]">Vehicle</th>
-                  <th scope="col" className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--x-text-secondary)]">VIN / Stock</th>
-                  <th scope="col" className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--x-text-secondary)]">Status</th>
-                  <th scope="col" className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--x-text-secondary)]">Details</th>
-                  <th scope="col" className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--x-text-secondary)]">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[color:var(--x-border)]">
-                {filteredAndSortedVehicles.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-sm text-[color:var(--x-text-secondary)]">
-                      {searchTerm || statusFilter !== 'all'
-                        ? 'No vehicles match the current search or filters.'
-                        : 'Inventory is empty. Add vehicles to get started.'}
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAndSortedVehicles.map((vehicle, index) => {
-                    const vehicleId = getVehicleIdentifier(vehicle) || `vehicle-${index}`;
-                    const statusLabel = formatStatusLabel(vehicle.status);
-                    const priceValue = asNumber(vehicle.price);
-                    const mileageValue = asNumber(vehicle.mileage ?? vehicle.odometer);
-                    const priceLabel = priceValue != null ? currencyFormatter.format(priceValue) : '—';
-                    const mileageLabel = mileageValue != null ? `${mileageFormatter.format(mileageValue)} mi` : '—';
-                    const updatedTimestamp = vehicle.updatedAt || vehicle.timestamp || vehicle.modifiedAt || vehicle.date;
-                    const updatedDate = updatedTimestamp ? new Date(updatedTimestamp) : null;
-                    const updatedLabel = updatedDate && !Number.isNaN(updatedDate.getTime()) ? updatedDate.toLocaleDateString() : '—';
-                    const locationLabel = vehicle.location || vehicle.lot || 'Lot TBD';
-                    const vinSuffix = vehicle.vin ? String(vehicle.vin).slice(-8).toUpperCase() : null;
-                    const vehicleTitle = buildVehicleTitle(vehicle) || 'Vehicle TBD';
-                    const isJobCreating = Boolean(jobLoadingId && vehicleId && jobLoadingId === vehicleId);
-                    const editingTargetId = editVehicleData?.id || editVehicleData?._id || editVehicleData?.vin || editVehicleData?.stockNumber;
-                    const isEditingRow = Boolean(editingTargetId && vehicleId && editingTargetId === vehicleId);
+        </section>
 
-                    return (
-                      <tr
-                        key={vehicleId}
-                        onClick={() => setSelectedVehicle(vehicle)}
-                        className="cursor-pointer transition-colors hover:bg-[color:var(--x-surface-elevated)]/80"
-                      >
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-semibold text-white">
-                            {vehicleTitle}
-                          </div>
-                          <div className="mt-1 text-xs text-[color:var(--x-text-secondary)]">
-                            {(vehicle.trim || 'Trim TBD')} • {(vehicle.color || 'Color TBD')}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-mono text-xs text-[color:var(--x-text-secondary)]">
-                            {vinSuffix ? `VIN • ${vinSuffix}` : 'VIN pending'}
-                          </div>
-                          <div className="mt-1 text-xs text-[color:var(--x-text-secondary)]">
-                            Stock • {vehicle.stockNumber || '—'}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${getStatusColor(statusLabel)}`}>
-                            <span className="h-1.5 w-1.5 rounded-full bg-white" />
-                            {statusLabel}
-                          </span>
-                          <div className="mt-2 text-[0.65rem] uppercase tracking-[0.12em] text-[color:var(--x-text-secondary)]">
-                            Updated {updatedLabel}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-[color:var(--x-text-secondary)]">
-                          <div className="flex flex-col gap-1">
-                            <span>Price: <span className="text-white font-semibold">{priceLabel}</span></span>
-                            <span>Mileage: <span className="text-white font-semibold">{mileageLabel}</span></span>
-                            <span>Location: <span className="text-white font-semibold">{locationLabel}</span></span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex flex-wrap justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleCreateJobClick(vehicle); }}
-                              disabled={isJobCreating}
-                              className="rounded-full bg-gradient-to-r from-[color:var(--x-primary)] to-[color:var(--x-primary-soft)] px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-lg shadow-[rgba(5,127,245,0.25)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {isJobCreating ? 'Creating…' : 'Create Job'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleEditVehicleClick(vehicle); }}
-                              className="rounded-full border border-[color:var(--x-border)] bg-black/40 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition hover:border-[color:var(--x-primary)] hover:text-[color:var(--x-primary)]"
-                            >
-                              {isEditingRow ? 'Editing…' : 'Edit Vehicle'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handlePrintVehicle(vehicle); }}
-                              className="rounded-full border border-[color:var(--x-border)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--x-text-secondary)] transition hover:border-[color:var(--x-primary)] hover:text-[color:var(--x-primary)]"
-                            >
-                              Print Sheet
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {metricTiles.map(tile => (
+            <article key={tile.key} className="x-card x-card--compact x-fade-in bg-black/40">
+              <p className="text-[0.65rem] uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">{tile.label}</p>
+              <p className="mt-3 text-2xl font-semibold text-white">{tile.value}</p>
+              <p className="text-xs text-[color:var(--x-text-secondary)]">{tile.description}</p>
+            </article>
+          ))}
+        </section>
+
+        <section className="rounded-3xl border border-[color:var(--x-border)] bg-[color:var(--x-surface)]/70 p-6 lg:p-8">
+          <div className="flex snap-x gap-5 overflow-x-auto pb-4 lg:grid lg:grid-cols-4 lg:gap-6 lg:overflow-visible">
+            {boardColumns.map(column => (
+              <div
+                key={column.key}
+                className="flex min-w-[280px] flex-1 flex-col gap-4 rounded-2xl border border-[color:var(--x-border)] bg-black/30 p-4 backdrop-blur-sm lg:min-w-0"
+              >
+                <header className="space-y-2 rounded-xl bg-gradient-to-br from-transparent via-transparent to-black/20 p-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-white">{column.label}</h3>
+                      <p className="text-xs text-[color:var(--x-text-secondary)]">{column.helper}</p>
+                    </div>
+                    <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${column.chipClass}`}>
+                      {column.vehicles.length}
+                    </span>
+                  </div>
+                </header>
+
+                <div className="flex flex-col gap-4">
+                  {column.vehicles.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[color:var(--x-border)] bg-black/20 p-6 text-center text-xs text-[color:var(--x-text-secondary)]">
+                      Nothing here yet. Drop a vehicle into this lane when ready.
+                    </div>
+                  ) : (
+                    column.vehicles.map((vehicle, index) => renderVehicleCard(vehicle, column.key, index))
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        </section>
       </div>
       {renderVehicleModal()}
     </div>

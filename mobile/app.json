@@ -1,23 +1,43 @@
 {
   "expo": {
-    "name": "CleanupTracker",
+    "name": "Cleanup Tracker",
     "slug": "cleanup-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cleanuptracker.app",
+      "buildNumber": "1.0.0",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs camera access to scan VIN barcodes",
+        "NSPhotoLibraryUsageDescription": "This app needs photo library access to save scanned images"
+      }
     },
     "android": {
+      "package": "com.cleanuptracker.app",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      }
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE"
+      ]
     },
     "extra": {
       "apiBaseUrl": "http://127.0.0.1:5051"
-    }
+    },
+    "plugins": []
   }
 }

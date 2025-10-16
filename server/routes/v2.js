@@ -7,6 +7,7 @@ const Vehicle = require('../models/Vehicle');
 const axios = require('axios');
 const csv = require('csv-parser');
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 const settingsStore = require('../utils/settingsStore');
 const {
   getInventoryCsvUrl,
@@ -338,7 +339,7 @@ router.get('/reports', async (req, res) => {
       dailyTrends
     });
   } catch (error) {
-    console.error('Reports error:', error);
+    logger.error('Reports error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -405,7 +406,7 @@ router.post('/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -469,7 +470,7 @@ router.post('/seed-users', async (req, res) => {
     const newCount = await V2User.countDocuments();
     res.json({ seeded: true, count: newCount });
   } catch (error) {
-    console.error('Seed users error:', error);
+    logger.error('Seed users error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -647,7 +648,7 @@ router.post('/jobs', async (req, res) => {
     const job = await Job.create(jobData);
     res.status(201).json(jobToResponse(job));
   } catch (error) {
-    console.error('Job creation error:', error);
+    logger.error('Job creation error', { error: error.message, stack: error.stack });
     res.status(400).json({ error: error.message || 'Failed to create job' });
   }
 });
@@ -863,7 +864,7 @@ async function handleQcCompletion(req, res) {
     await job.save();
     res.json(jobToResponse(job));
   } catch (error) {
-    console.error('QC completion error:', error);
+    logger.error('QC completion error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 }
@@ -893,7 +894,7 @@ async function handleSendMessage(req, res) {
   
   // In a real implementation, integrate with SMS service like Twilio
   // For now, we'll just log the message and return success
-  console.log('SMS would be sent:', {
+  logger.info('SMS would be sent', {
     message,
     recipients: recipients.map(r => ({ name: r.name, phone: r.phoneNumber })),
     jobId: job._id,
@@ -1030,7 +1031,7 @@ router.get('/vehicles', async (req, res) => {
 
     res.json({ success: true, vehicles, total, page: pageNum, limit: perPage });
   } catch (e) {
-    console.error('List vehicles failed:', e);
+    logger.error('List vehicles failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -1078,7 +1079,7 @@ router.put('/vehicles/:idOrVin', async (req, res) => {
 
     res.json({ success: true, vehicle });
   } catch (error) {
-    console.error('Update vehicle failed:', error);
+    logger.error('Update vehicle failed', { error: error.message, stack: error.stack });
     res.status(400).json({ success: false, error: error.message });
   }
 });
@@ -1162,7 +1163,7 @@ router.post('/vehicles/refresh', async (req, res) => {
       total
     });
   } catch (e) {
-    console.error('Refresh inventory failed:', e);
+    logger.error('Refresh inventory failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, message: e.message, source: getInventoryCsvUrl() });
   }
 });

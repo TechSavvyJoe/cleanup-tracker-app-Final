@@ -41,7 +41,7 @@ function escapeRegex(str) {
 }
 
 function sanitizeUser(userDoc) {
-  if (!userDoc) return null;
+  if (!userDoc) { return null; }
   const user = userDoc.toObject({ virtuals: true });
   delete user.pinHash;
   delete user.passwordHash;
@@ -54,7 +54,7 @@ function sanitizeUser(userDoc) {
 }
 
 async function findUserByCredential(identifier) {
-  if (!identifier) return null;
+  if (!identifier) { return null; }
   const normalizedEmployee = String(identifier).toUpperCase();
   const normalizedUsername = String(identifier).toLowerCase();
   return V2User.findOne({
@@ -67,7 +67,7 @@ async function findUserByCredential(identifier) {
 }
 
 async function findUserByPin(pin) {
-  if (!pin) return null;
+  if (!pin) { return null; }
   const candidates = await V2User.find({
     pinHash: { $exists: true, $ne: null },
     isActive: { $ne: false }
@@ -81,7 +81,7 @@ async function findUserByPin(pin) {
 }
 
 async function isPinInUse(pin, excludeId) {
-  if (!pin) return false;
+  if (!pin) { return false; }
   const query = {
     pinHash: { $exists: true, $ne: null }
   };
@@ -125,7 +125,7 @@ function authenticateToken(req, res, next) {
 }
 
 function jobToResponse(jobDoc) {
-  if (!jobDoc) return null;
+  if (!jobDoc) { return null; }
   const job = jobDoc.toObject({ virtuals: true });
   job.id = String(job._id);
   delete job._id;
@@ -186,7 +186,7 @@ router.post('/jobs/populate-vehicle-details', async (req, res) => {
           job.make = vehicle.make || '';
           job.model = vehicle.model || '';
           job.vehicleColor = vehicle.color || '';
-          if (!job.salesPerson) job.salesPerson = '';
+          if (!job.salesPerson) { job.salesPerson = ''; }
           if (!job.priority) job.priority = 'Normal';
           await job.save();
           updated++;
@@ -212,8 +212,8 @@ router.get('/reports', async (req, res) => {
     let dateFilter = {};
     if (startDate || endDate) {
       dateFilter.date = {};
-      if (startDate) dateFilter.date.$gte = startDate;
-      if (endDate) dateFilter.date.$lte = endDate;
+  if (startDate) { dateFilter.date.$gte = startDate; }
+  if (endDate) { dateFilter.date.$lte = endDate; }
     }
     
     // Get all jobs for the period
@@ -461,8 +461,8 @@ router.post('/seed-users', async (req, res) => {
         ...rest,
         username: username ? username.toLowerCase() : undefined
       });
-      if (seedPin) user.pin = seedPin;
-      if (password) user.password = password;
+  if (seedPin) { user.pin = seedPin; }
+  if (password) { user.password = password; }
       await user.save();
     }
 
@@ -478,10 +478,17 @@ router.use(authenticateToken);
 
 // Diagnostic endpoints (secured)
 router.get('/diag', async (req, res) => {
-  const users = await V2User.find();
+  const [users, vehicleCount, jobCount] = await Promise.all([
+    V2User.find(),
+    Vehicle.countDocuments(),
+    Job.countDocuments()
+  ]);
+
   res.json({
     message: 'V2 API active',
-    users: users.map(sanitizeUser)
+    users: users.map(sanitizeUser),
+    vehicles: vehicleCount,
+    jobs: jobCount
   });
 });
 
@@ -556,14 +563,14 @@ router.put('/users/:id', async (req, res) => {
     user.pin = pin;
   }
 
-  if (name !== undefined) user.name = name;
+  if (name !== undefined) { user.name = name; }
   if (employeeNumber !== undefined) {
     user.employeeNumber = employeeNumber ? String(employeeNumber).toUpperCase() : undefined;
   }
-  if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
-  if (department !== undefined) user.department = department;
-  if (role !== undefined) user.role = role;
-  if (typeof isActive === 'boolean') user.isActive = isActive;
+  if (phoneNumber !== undefined) { user.phoneNumber = phoneNumber; }
+  if (department !== undefined) { user.department = department; }
+  if (role !== undefined) { user.role = role; }
+  if (typeof isActive === 'boolean') { user.isActive = isActive; }
 
   await user.save();
   res.json(sanitizeUser(user));
@@ -647,7 +654,7 @@ router.post('/jobs', async (req, res) => {
 
 router.put('/jobs/:id/complete', async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   const end = new Date();
 
   job.status = job.qcRequired ? 'QC Required' : 'Completed';
@@ -662,7 +669,7 @@ router.put('/jobs/:id/complete', async (req, res) => {
 async function handlePauseJob(req, res) {
   const { reason } = req.body;
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'Paused';
   job.pausedAt = new Date();
@@ -678,7 +685,7 @@ router.post('/jobs/:id/pause', handlePauseJob);
 // Resume job
 router.put('/jobs/:id/resume', async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'In Progress';
   job.resumedAt = new Date();
@@ -689,10 +696,10 @@ router.put('/jobs/:id/resume', async (req, res) => {
 async function handleAddTechnician(req, res) {
   const { technicianId } = req.body;
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   const technician = await V2User.findById(technicianId);
-  if (!technician) return res.status(404).json({ error: 'Technician not found' });
+  if (!technician) { return res.status(404).json({ error: 'Technician not found' }); }
   
   if (!job.assignedTechnicianIds.includes(technicianId)) {
     job.assignedTechnicianIds.push(technicianId);

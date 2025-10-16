@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import UsersView from '../UsersView';
 import { V2 } from '../../../utils/v2Client';
+import { ToastProvider } from '../../../components/Toast';
 
 jest.mock('../../../utils/v2Client', () => ({
   V2: {
@@ -40,11 +41,13 @@ describe('UsersView', () => {
 
   const renderView = (props = {}) =>
     render(
-      <UsersView
-        users={props.users || {}}
-        detailers={props.detailers || detailers}
-        onDeleteUser={props.onDeleteUser || jest.fn()}
-      />
+      <ToastProvider>
+        <UsersView
+          users={props.users || []}
+          detailers={props.detailers || detailers}
+          onDeleteUser={props.onDeleteUser || jest.fn()}
+        />
+      </ToastProvider>
     );
 
   it('renders detailers and forwards delete actions', () => {
@@ -85,12 +88,14 @@ describe('UsersView', () => {
         name: 'New Detailer',
         pin: '9876',
         role: 'manager',
-        phone: '5557654321'
+        phoneNumber: '5557654321'
       });
     });
 
-    expect(window.alert).toHaveBeenCalledWith('User added successfully');
-    expect(window.location.reload).toHaveBeenCalled();
+    // Check that success toast is shown
+    await waitFor(() => {
+      expect(screen.getByText(/New Detailer added successfully as manager/i)).toBeTruthy();
+    });
 
     await waitFor(() => expect(screen.getByPlaceholderText('Full Name').value).toBe(''));
     await waitFor(() => expect(screen.getByPlaceholderText('4-Digit PIN').value).toBe(''));
@@ -108,9 +113,9 @@ describe('UsersView', () => {
       target: { value: '12' }
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
-
-    expect(window.alert).toHaveBeenCalledWith('PIN must be exactly 4 digits');
+    // Button should be disabled when PIN is not 4 digits
+    const submitButton = screen.getByRole('button', { name: /add member/i });
+    expect(submitButton.disabled).toBe(true);
     expect(V2.post).not.toHaveBeenCalled();
   });
 
@@ -129,10 +134,9 @@ describe('UsersView', () => {
     fireEvent.click(screen.getByRole('button', { name: /add member/i }));
 
     await waitFor(() => {
-      expect(window.alert).toHaveBeenCalledWith('Failed to add user: Network down');
+      expect(screen.getByText(/Failed to add user: Network down/i)).toBeTruthy();
     });
 
-    expect(window.location.reload).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /add member/i }).disabled).toBe(false);
   });
 

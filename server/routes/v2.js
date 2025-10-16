@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const V2User = require('../models/V2User');
 const Job = require('../models/Job');
 const Vehicle = require('../models/Vehicle');
@@ -987,6 +988,54 @@ router.get('/vehicles', async (req, res) => {
   } catch (e) {
     console.error('List vehicles failed:', e);
     res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+router.put('/vehicles/:idOrVin', async (req, res) => {
+  try {
+    const { idOrVin } = req.params;
+    const updates = {};
+    const allowed = ['status', 'price', 'odometer', 'tags', 'color', 'location', 'detailPackage', 'notes', 'trim'];
+
+    allowed.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
+        const value = req.body[key];
+        if (value === null || value === undefined) {
+          updates[key] = '';
+        } else if (typeof value === 'string') {
+          updates[key] = value.trim();
+        } else {
+          updates[key] = value;
+        }
+      }
+    });
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, error: 'No valid vehicle fields provided' });
+    }
+
+    const normalizedIdentifier = String(idOrVin || '').trim();
+    if (!normalizedIdentifier) {
+      return res.status(400).json({ success: false, error: 'Vehicle identifier required' });
+    }
+
+    const query = mongoose.Types.ObjectId.isValid(normalizedIdentifier)
+      ? { _id: normalizedIdentifier }
+      : { vin: normalizedIdentifier.toUpperCase() };
+
+    const vehicle = await Vehicle.findOneAndUpdate(query, { $set: updates }, {
+      new: true,
+      runValidators: true
+    });
+
+    if (!vehicle) {
+      return res.status(404).json({ success: false, error: 'Vehicle not found' });
+    }
+
+    res.json({ success: true, vehicle });
+  } catch (error) {
+    console.error('Update vehicle failed:', error);
+    res.status(400).json({ success: false, error: error.message });
   }
 });
 

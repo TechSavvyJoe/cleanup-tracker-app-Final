@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 // Create a minimal API client
@@ -12,7 +12,10 @@ const SimpleLogin = () => {
   const [user, setUser] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // Removed unused state variables since this component is not actively used
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [newJob, setNewJob] = useState({ vin: '', serviceType: 'Cleanup' });
+  const [savingJob, setSavingJob] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -38,6 +41,93 @@ const SimpleLogin = () => {
   const handleLogout = () => {
     setUser(null);
     setPin('');
+    setJobs([]);
+  };
+
+  const fetchJobs = useCallback(async () => {
+    const response = await API.get('/jobs');
+    return Array.isArray(response.data) ? response.data : [];
+  }, []);
+
+  const refreshJobs = useCallback(async () => {
+    const jobList = await fetchJobs();
+    setJobs(jobList);
+  }, [fetchJobs]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let isActive = true;
+    setJobsLoading(true);
+
+    fetchJobs()
+      .then((jobList) => {
+        if (isActive) {
+          setJobs(jobList);
+        }
+      })
+      .catch((err) => {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Failed to load jobs:', err);
+        }
+        if (isActive) {
+          alert('Failed to load jobs. Please try again.');
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setJobsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [user, fetchJobs]);
+
+  const createJob = async (event) => {
+    event.preventDefault();
+    if (!user) return;
+
+    const vin = newJob.vin.trim().toUpperCase();
+    if (!vin) {
+      alert('Please enter a VIN before creating a job.');
+      return;
+    }
+
+    setSavingJob(true);
+
+    try {
+      await API.post('/jobs', {
+        technicianId: user.id || 'web-user',
+        technicianName: user.name || 'Web User',
+        vin,
+        stockNumber: '',
+        vehicleDescription: 'Simple Login Job',
+        serviceType: newJob.serviceType || 'Cleanup',
+        priority: 'Normal'
+      });
+
+      await refreshJobs();
+      setNewJob({ vin: '', serviceType: newJob.serviceType });
+      alert('Job created successfully');
+    } catch (err) {
+      alert('Failed to create job: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setSavingJob(false);
+    }
+  };
+
+  const completeJob = async (jobId) => {
+    if (!user || !jobId) return;
+
+    try {
+      await API.put(`/jobs/${jobId}/complete`);
+      await refreshJobs();
+      alert('Job marked as completed');
+    } catch (err) {
+      alert('Failed to complete job: ' + (err.response?.data?.error || err.message));
+    }
   };
 
   // Removed unused functions since this component is not actively used
@@ -97,9 +187,10 @@ const SimpleLogin = () => {
                 </div>
                 <button
                   type="submit"
-                  className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg transition-colors"
+                  disabled={savingJob}
+                  className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-bold py-3 px-4 rounded-lg transition-colors"
                 >
-                  Create Job
+                  {savingJob ? 'Creating...' : 'Create Job'}
                 </button>
               </form>
             </div>
@@ -108,7 +199,9 @@ const SimpleLogin = () => {
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-xl font-bold text-gray-800 mb-4">Jobs ({jobs.length})</h2>
               <div className="space-y-4 max-h-96 overflow-y-auto">
-                {jobs.length === 0 ? (
+                {jobsLoading ? (
+                  <p className="text-gray-500 text-center py-8">Loading jobs…</p>
+                ) : jobs.length === 0 ? (
                   <p className="text-gray-500 text-center py-8">No jobs found</p>
                 ) : (
                   jobs.map((job) => (

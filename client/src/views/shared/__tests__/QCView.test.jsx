@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import QCView from '../QCView';
 import { V2 } from '../../../utils/v2Client';
 
@@ -75,8 +75,8 @@ describe('QCView', () => {
   it('displays pending QC jobs and summary statistics', () => {
     renderView();
 
-    const pendingCard = screen.getByText('Pending Review').closest('div');
-    within(pendingCard).getByText('1');
+  expect(screen.getByText('Pending Review')).toBeTruthy();
+  expect(screen.getByText('1 Pending')).toBeTruthy();
 
     screen.getByText(/Tesla/i);
     screen.getByText('VIN123');

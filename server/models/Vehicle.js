@@ -35,6 +35,9 @@ const VehicleSchema = new Schema({
         required: true,
         index: true
     },
+    trim: {
+        type: String
+    },
     body: {
         type: String
     },
@@ -42,6 +45,9 @@ const VehicleSchema = new Schema({
         type: String
     },
     color: {
+        type: String
+    },
+    location: {
         type: String
     },
     odometer: {
@@ -75,6 +81,12 @@ const VehicleSchema = new Schema({
     lastCleaned: {
         type: Date,
         index: true
+    },
+    detailPackage: {
+        type: String
+    },
+    notes: {
+        type: String
     }
 }, {
     timestamps: true

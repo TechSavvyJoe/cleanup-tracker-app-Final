@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { ModernTheme } from '../styles/ModernDesignSystem';
-import { PerformanceChart, BarChart, DonutChart, Heatmap } from './DataVisualization';
+import { PerformanceChart, DonutChart } from './DataVisualization';
 
 // Enhanced Reports Component with Advanced Features
 const EnhancedReports = ({ jobs, users, theme }) => {
@@ -17,7 +17,7 @@ const EnhancedReports = ({ jobs, users, theme }) => {
   const currentTheme = theme === 'dark' ? ModernTheme.dark : ModernTheme.light;
 
   // Calculate date range
-  const getDateRange = () => {
+  const getDateRange = useCallback(() => {
     const end = new Date();
     const start = new Date();
     
@@ -45,7 +45,7 @@ const EnhancedReports = ({ jobs, users, theme }) => {
     }
     
     return { start, end };
-  };
+  }, [dateRange]);
 
   // Filter jobs based on criteria
   const filteredJobs = useMemo(() => {
@@ -60,7 +60,7 @@ const EnhancedReports = ({ jobs, users, theme }) => {
       
       return inDateRange && matchesStatus && matchesAssignee && matchesType;
     });
-  }, [jobs, dateRange, filters]);
+  }, [jobs, getDateRange, filters]);
 
   // Calculate metrics - focused on time tracking and efficiency
   const metrics = useMemo(() => {

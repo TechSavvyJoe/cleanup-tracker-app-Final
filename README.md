@@ -19,3 +19,9 @@ Set `INVENTORY_CSV_URL` in `server/.env` to your published Google Sheet CSV. The
 ## Scanner
 
 The built-in scanner supports QR, Code39, and Code128 via native `BarcodeDetector` or ZXing fallback. It parses VINs from QR payloads and supports long 1D barcodes.
+
+## Security & dependency notes
+
+- Excel exports now rely on `exceljs` to replace the vulnerable `xlsx` library (prototype pollution / ReDoS advisories). If you still have utilities built on SheetJS, migrate them to the new helper in `client/src/components/SimpleReports.js`.
+- We pin patched versions of `postcss`, `resolve-url-loader`, `webpack-dev-server`, and related dependencies through npm overrides, but Create React App still bundles `webpack-dev-server` with an open advisory (GHSA-9jgg-88mc-972h). Limit exposure of the dev server in untrusted networks and consider migrating to a modern toolchain (e.g. Vite or Next.js) when possible.
+- A detailed transition plan is available in `docs/CRA_MIGRATION_PLAN.md`.

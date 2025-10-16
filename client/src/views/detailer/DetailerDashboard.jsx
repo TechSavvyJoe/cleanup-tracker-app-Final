@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { V2 } from '../../utils/v2Client';
-import { GlassCard, ProgressRing, Sparkline } from '../../components/PremiumUI';
+import { GlassCard, ProgressRing } from '../../components/PremiumUI';
+import { Sparkline } from '../../components/DataVisualization';
 import LiveTimer from '../../components/LiveTimer';
 import DateUtils from '../../utils/dateUtils';
 

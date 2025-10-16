@@ -557,8 +557,7 @@ function JobsView({ jobs, users, currentUser, onRefresh }) {
             </table>
           </div>
         </section>
-
-      {/* Compact Job Details Modal */}
+      )}
       {selectedJob && (
         <div className="fixed inset-0 bg-[rgba(15,20,25,0.72)] backdrop-blur-md flex items-center justify-center z-50 p-4">
           <div className="job-detail-panel w-full max-w-5xl">

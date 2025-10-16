@@ -15,8 +15,8 @@ body {
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #000000;
-  color: #e7e9ea;
+  background-color: #05070a;
+  color: #f1f5f9;
   min-height: 100vh;
   letter-spacing: -0.01em;
 }
@@ -181,16 +181,16 @@ code {
 
 /* ===== X.COM EXPERIENCE UTILITIES ===== */
 :root {
-  --x-border: #2f3336;
-  --x-border-hover: #3f4144;
-  --x-surface: #0f1419;
-  --x-surface-elevated: #16181c;
-  --x-text-primary: #e7e9ea;
-  --x-text-secondary: #8b98a5;
+  --x-border: #1d242d;
+  --x-border-hover: #27303b;
+  --x-surface: #0c1118;
+  --x-surface-elevated: #121922;
+  --x-text-primary: #f1f5f9;
+  --x-text-secondary: #b8c2d1;
   --x-blue: #1d9bf0;
-  --x-blue-hover: #1a8cd8;
-  --x-green: #00ba7c;
-  --x-red: #f4212e;
+  --x-blue-hover: #1681cc;
+  --x-green: #12d18c;
+  --x-red: #ff5461;
 }
 
 .x-card {

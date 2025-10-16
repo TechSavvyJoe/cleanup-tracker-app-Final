@@ -92,12 +92,10 @@ describe('UsersView', () => {
     expect(window.alert).toHaveBeenCalledWith('User added successfully');
     expect(window.location.reload).toHaveBeenCalled();
 
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('Full Name').value).toBe('');
-      expect(screen.getByPlaceholderText('4-Digit PIN').value).toBe('');
-      expect(screen.getByPlaceholderText('Phone Number (optional)').value).toBe('');
-      expect(roleSelect.value).toBe('detailer');
-    });
+    await waitFor(() => expect(screen.getByPlaceholderText('Full Name').value).toBe(''));
+    await waitFor(() => expect(screen.getByPlaceholderText('4-Digit PIN').value).toBe(''));
+    await waitFor(() => expect(screen.getByPlaceholderText('Phone Number (optional)').value).toBe(''));
+    await waitFor(() => expect(roleSelect.value).toBe('detailer'));
   });
 
   it('prevents submission when PIN is not 4 digits', () => {

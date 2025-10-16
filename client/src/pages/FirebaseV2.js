@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useCallback, Suspense, useRef } from 'react';
-import VinScanner from '../components/VinScanner';
 import { useToast } from '../components/Toast';
 import { V2, v2Request } from '../utils/v2Client';
 import { setSessionTokens, clearSessionTokens, persistSession, loadStoredSession, UNAUTHORIZED_EVENT } from '../hooks/useAuth';
@@ -13,19 +12,10 @@ import SettingsPanel from '../components/SettingsPanel';
 import EnterpriseInventory from '../components/EnterpriseInventory';
 
 // 🚀 Premium Enterprise Components - Currently Integrated
-import { 
-  GlassCard, 
-  ProgressRing, 
+import {
   SkeletonLoader,
   CommandPalette
 } from '../components/PremiumUI';
-
-// 📊 Advanced Data Visualizations
-import { 
-  PerformanceChart, 
-  DonutChart, 
-  Sparkline
-} from '../components/DataVisualization';
 
 import DetailerDashboard from '../views/detailer/DetailerDashboard';
 import DetailerNewJob from '../views/detailer/DetailerNewJob';
@@ -209,61 +199,19 @@ const DateUtils = {
   }
 };
 
-// Enhanced Live Timer Component with error handling
-function LiveTimer({ startTime, className = "text-lg font-mono" }) {
-  const [elapsed, setElapsed] = useState(0);
-  const [isValid, setIsValid] = useState(true);
-  
-  useEffect(() => {
-    if (!startTime || !DateUtils.isValidDate(startTime)) {
-      setIsValid(false);
-      setElapsed(0);
-      return;
-    }
-    
-    setIsValid(true);
-    const start = new Date(startTime).getTime();
-    const update = () => {
-      const now = Date.now();
-      const diff = Math.max(0, Math.floor((now - start) / 1000));
-      // Cap at 24 hours to prevent display issues
-      setElapsed(Math.min(diff, 24 * 60 * 60));
-    };
-    
-    update();
-    const interval = setInterval(update, 1000);
-    
-    return () => clearInterval(interval);
-  }, [startTime]);
-  
-  const formatTime = (seconds) => {
-    if (!isValid || seconds === 0) return '--:--:--';
-    const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
-    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-    const s = (seconds % 60).toString().padStart(2, '0');
-    return `${h}:${m}:${s}`;
-  };
-  
-  if (!isValid) {
-    return <span className={className}>--:--:--</span>;
-  }
-  
-  return <span className={className}>{formatTime(elapsed)}</span>;
-}
-
 // 🎨 BILLION DOLLAR TECH COMPANY LOGIN - ULTRA PREMIUM DESIGN
 function LoginForm({ onLogin }) {
   const [employeeId, setEmployeeId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [siteTitle, setSiteTitle] = useState('Cleanup Tracker');
+  const [siteTitle, setSiteTitle] = useState('CleanUp Tracker');
 
   // Load settings for site title
   useEffect(() => {
     (async () => {
       try {
         const res = await V2.get('/settings');
-        const title = res.data?.siteTitle || 'Cleanup Tracker';
+  const title = res.data?.siteTitle || 'CleanUp Tracker';
         setSiteTitle(title);
       } catch (_) {
         // ignore, fallback title
@@ -716,7 +664,7 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
   const [isSearching, setIsSearching] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [settings, setSettings] = useState({ siteTitle: 'Cleanup Tracker' });
+  const [settings, setSettings] = useState({ siteTitle: 'CleanUp Tracker' });
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [componentError, setComponentError] = useState(null);
   // Sidebar visibility: default hidden on mobile, shown on large screens
@@ -731,7 +679,7 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
   const [theme] = useState('dark'); // Locked to dark mode
   const [showSettings, setShowSettings] = useState(false);
   const siteTitle = useMemo(() => (
-    settings?.siteTitle && settings.siteTitle.trim() ? settings.siteTitle.trim() : 'Cleanup Tracker'
+  settings?.siteTitle && settings.siteTitle.trim() ? settings.siteTitle.trim() : 'CleanUp Tracker'
   ), [settings?.siteTitle]);
   const corporateMark = useMemo(() => {
     const words = siteTitle.split(' ').filter(Boolean);
@@ -869,14 +817,14 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
         fetchWithRetry('/users'),
         fetchWithRetry('/settings').catch(() => {
           Logger.warn('Settings endpoint failed, using defaults');
-          return { data: { siteTitle: 'Cleanup Tracker' } };
+          return { data: { siteTitle: 'CleanUp Tracker' } };
         })
       ]);
       
       // Data validation and sanitization
       const jobs = Array.isArray(jobsRes.data) ? jobsRes.data : [];
       const usersArray = Array.isArray(usersRes.data) ? usersRes.data : [];
-      const settings = settingsRes.data || { siteTitle: 'Cleanup Tracker' };
+  const settings = settingsRes.data || { siteTitle: 'CleanUp Tracker' };
 
       // Performance optimization: batch state updates
       setJobs(jobs);
@@ -898,7 +846,7 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
       // Sanitize settings
       const sanitizedSettings = {
         ...settings,
-        siteTitle: Security.sanitizeInput(settings.siteTitle || 'Cleanup Tracker'),
+  siteTitle: Security.sanitizeInput(settings.siteTitle || 'CleanUp Tracker'),
         theme: settings.theme || 'light'
       };
       setSettings(sanitizedSettings);
@@ -1896,7 +1844,39 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
               {view === 'qc' && <QCView jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} />}
               {view === 'users' && <UsersView users={users} detailers={detailers} onDeleteUser={deleteUser} />}
               {view === 'reports' && <ReportsView jobs={jobs} users={users} />}
-              {view === 'inventory' && <EnterpriseInventory theme={theme} />}
+              {view === 'inventory' && (
+                <EnterpriseInventory
+                  theme={theme}
+                  currentUser={user}
+                  onVehicleUpdated={(updatedVehicle) => {
+                    if (!updatedVehicle) return;
+                    loadInitialData();
+                  }}
+                  onCreateJob={async (vehicle) => {
+                    if (!vehicle) return;
+                    try {
+                      await V2.post('/jobs', {
+                        technicianId: user.id,
+                        technicianName: user.name,
+                        vin: vehicle.vin,
+                        stockNumber: vehicle.stockNumber,
+                        vehicleDescription: `${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''}`.trim() || vehicle.vehicle || 'Vehicle',
+                        serviceType: 'Cleanup',
+                        year: vehicle.year,
+                        make: vehicle.make,
+                        model: vehicle.model,
+                        vehicleColor: vehicle.color || ''
+                      });
+                      await loadInitialData();
+                      toast.success('Job created successfully');
+                    } catch (error) {
+                      const message = error?.response?.data?.error || error?.message || 'Failed to create job';
+                      toast.error(message);
+                      throw error;
+                    }
+                  }}
+                />
+              )}
               {view === 'settings' && <SettingsView settings={settings} onSettingsChange={setSettings} />}
               {view === 'me' && <MySettingsView user={user} />}
             </>

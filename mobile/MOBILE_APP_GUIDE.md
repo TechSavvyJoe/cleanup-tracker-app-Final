@@ -204,15 +204,15 @@ expo build:android -t app-bundle
 
 ### Default Settings
 
-**Development**: `http://127.0.0.1:5051`
-**Production**: Update in `app.json` → `extra.apiBaseUrl`
+**Production**: `https://api.cleanuptracker.com`
+**Staging**: Point to your staged Cleanup Tracker domain via `app.json` → `extra.apiBaseUrl`
 
 ### Changing API URL
 
 **Method 1: In-App** (Recommended)
 - Open app
 - Edit "API Base URL" field
-- Enter your server URL (e.g., `http://192.168.1.100:5051`)
+- Enter your server URL (e.g., `https://api.cleanuptracker.com`)
 
 **Method 2: Code**
 - Edit `mobile/app.json`
@@ -222,17 +222,16 @@ expo build:android -t app-bundle
 ### Network Tips
 
 **iOS Simulator**:
-- Use `http://localhost:5051` or `http://127.0.0.1:5051`
-- Simulator shares host machine's localhost
+- Use a secure domain that resolves to your development server (e.g., `https://api.cleanuptracker.test`)
+- Tools like `dnsmasq` or host file aliases keep the experience consistent with production.
 
 **Android Emulator**:
-- Use `http://10.0.2.2:5051` (special alias for host)
-- Or use your machine's IP: `http://192.168.x.x:5051`
+- Map a friendly hostname to your development server (e.g., via `/etc/hosts`) and reference the HTTPS variant.
+- Ensure your certificate (self-signed or via mkcert) is trusted in the emulator.
 
 **Physical Device**:
-- Must use host machine's IP address
-- Device and server must be on same WiFi network
-- Example: `http://192.168.68.118:5051`
+- Expose your development backend through a trusted HTTPS endpoint (e.g., `https://api.cleanuptracker.dev` via reverse proxy or tunneling).
+- Confirm the certificate chain is valid so the device accepts the connection without manual steps.
 
 ---
 

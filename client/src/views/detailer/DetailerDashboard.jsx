@@ -389,8 +389,8 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
   };
 
   return (
-    <div className="min-h-screen bg-black p-4">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="mx-auto max-w-[1600px] space-y-6">
+      <div className="space-y-6">
         {/* Current Job Status - X.com Style */}
         {userActiveJob ? (
           <div className="bg-black rounded-2xl p-8 border border-gray-800 hover:border-gray-700 transition-all duration-200">

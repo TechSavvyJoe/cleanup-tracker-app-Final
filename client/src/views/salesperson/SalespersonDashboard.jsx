@@ -330,8 +330,8 @@ function SalespersonDashboard({ user, jobs, onRefresh }) {
     : { title: 'Nothing to show', description: 'Try a different status filter to see more jobs.' };
 
   return (
-    <div className="min-h-screen bg-[#050507] px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-8">
+    <div className="mx-auto max-w-[1600px] space-y-8">
+      <div className="flex flex-col gap-8">
         <header className="rounded-3xl border border-[color:var(--x-border)] bg-[color:var(--x-surface)] px-6 py-6 shadow-[0_20px_55px_rgba(4,5,7,0.55)] sm:px-8 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-6">
             <div className="flex flex-wrap items-center gap-4">

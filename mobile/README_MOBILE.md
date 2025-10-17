@@ -75,11 +75,7 @@ npx expo install react-native-svg@15.2.0
 
 ### API URL Configuration
 
-The app automatically detects the correct API URL:
-
-- **iOS Simulator**: http://127.0.0.1:5051
-- **Android Emulator**: http://10.0.2.2:5051
-- **Physical Device**: Configure in app settings
+The app resolves its API base URL from `expo.extra.apiBaseUrl` and can be overridden in-app. Use your secure Cleanup Tracker domain in every environment (e.g., `https://api.cleanuptracker.com`). For local development, expose the backend through a trusted HTTPS endpoint or tunnel so the hostname matches your production-style domain.
 
 ### Current Configuration (app.json)
 

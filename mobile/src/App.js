@@ -31,6 +31,7 @@ import Constants from 'expo-constants';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import { SvgXml } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
 import { VictoryAxis, VictoryBar, VictoryChart, VictoryLine, VictoryTheme } from 'victory-native';
 
@@ -49,11 +50,7 @@ import { fetchSettings } from './api/settings';
 import { searchVehicles } from './api/vehicles';
 import { fetchReports } from './api/reports';
 
-const DEFAULT_LOCAL_BASE = Platform.select({
-  ios: 'http://127.0.0.1:5051',
-  android: 'http://10.0.2.2:5051',
-  default: 'http://127.0.0.1:5051'
-});
+const DEFAULT_LOCAL_BASE = null;
 
 const KEYPAD_LAYOUT = [
   ['1', '2', '3'],
@@ -114,13 +111,19 @@ const resolveRuntimeHost = () => {
 };
 
 const RUNTIME_HOST = resolveRuntimeHost();
-const RUNTIME_API_BASE = RUNTIME_HOST ? `http://${RUNTIME_HOST}:5051` : null;
+const RUNTIME_API_BASE = (__DEV__ && RUNTIME_HOST) ? `http://${RUNTIME_HOST}:5051` : null;
+
+const EXPO_CONFIG_BASE = Constants.expoConfig?.extra?.apiBaseUrl;
+const MANIFEST2_BASE = Constants.manifest2?.extra?.expoClient?.extra?.apiBaseUrl;
+const CLASSIC_MANIFEST_BASE = Constants.manifest?.extra?.apiBaseUrl;
 
 const DEFAULT_API_BASE =
-  Constants.expoConfig?.extra?.apiBaseUrl?.trim() ||
-  Constants.manifest2?.extra?.expoClient?.extra?.apiBaseUrl?.trim() ||
+  (EXPO_CONFIG_BASE && EXPO_CONFIG_BASE.trim()) ||
+  (MANIFEST2_BASE && MANIFEST2_BASE.trim()) ||
+  (CLASSIC_MANIFEST_BASE && CLASSIC_MANIFEST_BASE.trim && CLASSIC_MANIFEST_BASE.trim()) ||
   RUNTIME_API_BASE ||
-  DEFAULT_LOCAL_BASE;
+  DEFAULT_LOCAL_BASE ||
+  '';
 
 function formatElapsedMinutes(startTime) {
   if (!startTime) {
@@ -247,6 +250,7 @@ function App() {
 
   const hiddenInputRef = useRef(null);
   const lastAttemptedPin = useRef(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   const normalizedApiBase = useMemo(() => {
     const trimmed = (apiBaseUrl || '').trim();
@@ -381,9 +385,7 @@ function App() {
       if (messageFromServer) {
         setError(messageFromServer);
       } else if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
-        setError(
-          "Network error. Ensure the backend is reachable from this device. On simulators use your Mac's LAN IP (e.g. http://192.168.x.x:5051)."
-        );
+        setError('Network error. Confirm the Cleanup Tracker API is reachable from this device or update the workspace URL in Settings.');
       } else {
         setError(err.message || 'Login failed');
       }
@@ -443,7 +445,12 @@ function App() {
                 contentContainerStyle={styles.authContainer}
                 keyboardShouldPersistTaps="handled"
               >
-                <BrandHeader />
+                <View style={styles.brandRow}>
+                  <BrandHeader />
+                  <TouchableOpacity style={styles.loginSettingsButton} onPress={() => setShowSettingsModal(true)}>
+                    <Ionicons name="settings-outline" size={22} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                </View>
                 <LoginPanel
                   pin={pin}
                   onPinChange={handlePinChange}
@@ -471,14 +478,26 @@ function App() {
                   maxLength={8}
                 />
 
-                <ConnectionSettingsCard
-                  apiBaseUrl={apiBaseUrl}
-                  onChangeBaseUrl={setApiBaseUrl}
-                  employeeId={employeeId}
-                  onChangeEmployeeId={setEmployeeId}
-                  connectionStatus={connectionStatus}
-                  onRecheck={updateConnectionStatus}
-                />
+                {/* Connection settings available via modal */}
+                <Modal visible={showSettingsModal} animationType="slide" transparent>
+                  <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                      <ConnectionSettingsCard
+                        apiBaseUrl={apiBaseUrl}
+                        onChangeBaseUrl={setApiBaseUrl}
+                        employeeId={employeeId}
+                        onChangeEmployeeId={setEmployeeId}
+                        connectionStatus={connectionStatus}
+                        onRecheck={updateConnectionStatus}
+                      />
+                      <View style={{ marginTop: 12 }}>
+                        <TouchableOpacity style={styles.outlineButton} onPress={() => setShowSettingsModal(false)}>
+                          <Text style={styles.outlineButtonText}>Done</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
               </ScrollView>
             </KeyboardAvoidingView>
           ) : (
@@ -495,25 +514,41 @@ function App() {
 function getStatusText(status, baseUrl) {
   switch (status) {
     case 'checking':
-      return 'Checking API connectivity…';
+      return baseUrl ? `Checking connectivity to ${baseUrl}…` : 'Checking API connectivity…';
     case 'reachable':
       return `Connected to ${baseUrl}`;
     case 'error':
-      return 'API not reachable. Update the base URL or start the backend.';
+      return baseUrl ? 'API not reachable. Verify the workspace URL or try again.' : 'Set your workspace API URL to continue.';
     default:
-      return 'Enter your PIN to sign in.';
+      return baseUrl ? 'Enter your Cleanup Tracker PIN to sign in.' : 'Provide your workspace API URL to link this device.';
   }
 }
+
+const CT_LOGO_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32" viewBox="0 0 120 32">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+  </defs>
+  <rect width="120" height="32" rx="6" fill="none" />
+  <g transform="translate(0,0)">
+    <rect x="2" y="2" width="28" height="28" rx="6" fill="url(#g)" />
+    <text x="16" y="21" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="14" fill="#fff">CT</text>
+  </g>
+  <text x="40" y="21" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="14" fill="#ffffff">CleanUp Track</text>
+</svg>
+`;
 
 function BrandHeader() {
   return (
     <View style={styles.brandHeader}>
       <View style={styles.brandMark}>
-        <Ionicons name="sparkles-outline" size={22} color={COLORS.textPrimary} />
+        <SvgXml xml={CT_LOGO_SVG} width={52} height={28} />
       </View>
       <View>
-        <Text style={styles.brandTitle}>Cleanup Tracker</Text>
-        <Text style={styles.brandSubtitle}>Enterprise Field Ops — X Edition</Text>
+        <Text style={styles.brandTitle}>CleanUp Track</Text>
       </View>
     </View>
   );
@@ -543,11 +578,8 @@ function LoginPanel({
       />
 
       <View style={styles.loginCardHeader}>
-        <View style={styles.loginBadge}>
-          <Ionicons name="shield-checkmark" size={18} color={COLORS.accent} />
-        </View>
-        <Text style={styles.loginTitle}>Link your Cleanup Tracker workspace</Text>
-        <Text style={styles.loginSubtitle}>Enter your 4-digit shift PIN to unlock timers and assignments.</Text>
+        {/* Replace the previous workspace link wording with the CleanUp Track branding */}
+        <BrandHeader />
       </View>
 
       {error ? (
@@ -613,45 +645,7 @@ function LoginPanel({
         ))}
       </View>
 
-      {pin.length >= 4 && (
-        <TouchableOpacity
-          style={[styles.primaryButton, loading && styles.buttonDisabled]}
-          onPress={onSubmit}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
-          <LinearGradient
-            colors={[COLORS.accent, COLORS.accentAlt]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.primaryButtonGradient}
-          >
-            <Text style={styles.primaryButtonText}>
-              {loading ? 'Connecting…' : 'Link Workspace'}
-            </Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      )}
-
-      <View style={styles.statusRow}>
-        <View style={[styles.statusChip, connectionStatus === 'reachable' && styles.statusChipSuccess, connectionStatus === 'error' && styles.statusChipError]}>
-          <Ionicons
-            name={
-              connectionStatus === 'reachable'
-                ? 'checkmark-circle-outline'
-                : connectionStatus === 'error'
-                  ? 'alert-circle-outline'
-                  : connectionStatus === 'checking'
-                    ? 'refresh-outline'
-                    : 'radio-outline'
-            }
-            size={14}
-            color={connectionStatus === 'error' ? COLORS.danger : connectionStatus === 'reachable' ? COLORS.success : COLORS.textSecondary}
-          />
-          <Text style={styles.statusChipText}>{statusText}</Text>
-        </View>
-        {loading ? <ActivityIndicator size="small" color={COLORS.accent} /> : null}
-      </View>
+      {/* Removed inline 'Link Workspace' button and connection status from login UI per UX request. */}
     </View>
   );
 }
@@ -699,15 +693,15 @@ function ConnectionSettingsCard({
     <View style={styles.connectionCard}>
       <Text style={styles.sectionHeading}>Connection Settings</Text>
       <Text style={styles.sectionSubheading}>
-        Keep these aligned with your desktop workspace. Update the API base when testing on a
-        device or emulator.
+        Align this device with your Cleanup Tracker workspace. Enter the same API base URL that
+        powers your desktop deployment.
       </Text>
 
       <View style={styles.inputGroup}>
         <Text style={styles.label}>API Base URL</Text>
         <TextInput
           style={styles.input}
-          placeholder="http://192.168.0.10:5051"
+          placeholder="https://api.cleanuptracker.com"
           placeholderTextColor={COLORS.textSecondary}
           autoCapitalize="none"
           autoCorrect={false}
@@ -718,7 +712,7 @@ function ConnectionSettingsCard({
       </View>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.label}>Employee ID (optional)</Text>
+        <Text style={styles.label}>Employee Number (optional)</Text>
         <TextInput
           style={styles.input}
           placeholder="MGR001"
@@ -734,7 +728,14 @@ function ConnectionSettingsCard({
         <Text style={styles.outlineButtonText}>Check Connectivity</Text>
       </TouchableOpacity>
 
-      <View style={styles.statusRow}>
+      <View
+        style={[
+          styles.statusRow,
+          styles.statusChip,
+          connectionStatus === 'reachable' && styles.statusChipSuccess,
+          connectionStatus === 'error' && styles.statusChipError
+        ]}
+      >
         <Ionicons
           name={
             connectionStatus === 'reachable'
@@ -754,13 +755,7 @@ function ConnectionSettingsCard({
                 : COLORS.textSecondary
           }
         />
-        <Text
-          style={[
-            styles.statusText,
-            connectionStatus === 'reachable' && { color: COLORS.success },
-            connectionStatus === 'error' && { color: COLORS.danger }
-          ]}
-        >
+        <Text style={styles.statusChipText}>
           {getStatusText(connectionStatus, apiBaseUrl)}
         </Text>
       </View>
@@ -2561,13 +2556,20 @@ function SettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
-          placeholder="http://192.168.0.10:5051"
+          placeholder="https://api.cleanuptracker.com"
           placeholderTextColor={COLORS.textSecondary}
         />
         <TouchableOpacity style={styles.outlineButton} onPress={checkConnectivity}>
           <Text style={styles.outlineButtonText}>Check Connectivity</Text>
         </TouchableOpacity>
-        <View style={styles.statusRow}>
+        <View
+          style={[
+            styles.statusRow,
+            styles.statusChip,
+            connectionStatus === 'reachable' && styles.statusChipSuccess,
+            connectionStatus === 'error' && styles.statusChipError
+          ]}
+        >
           <Ionicons
             name={
               connectionStatus === 'reachable'
@@ -2587,13 +2589,7 @@ function SettingsScreen() {
                   : COLORS.textSecondary
             }
           />
-          <Text
-            style={[
-              styles.statusText,
-              connectionStatus === 'reachable' && { color: COLORS.success },
-              connectionStatus === 'error' && { color: COLORS.danger }
-            ]}
-          >
+          <Text style={styles.statusChipText}>
             {getStatusText(connectionStatus, rawBaseUrl)}
           </Text>
         </View>

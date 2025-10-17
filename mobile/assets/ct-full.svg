@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 64" width="240" height="64">
+  <defs>
+    <linearGradient id="g2" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+  </defs>
+  <rect width="240" height="64" rx="12" fill="none" />
+  <g transform="translate(12,8)">
+    <rect width="48" height="48" rx="10" fill="url(#g2)" />
+    <text x="24" y="34" font-family="Inter, Arial, sans-serif" font-weight="800" font-size="20" fill="#fff" text-anchor="middle">CT</text>
+  </g>
+  <text x="76" y="40" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="22" fill="#111827">CleanUp Track</text>
+</svg>

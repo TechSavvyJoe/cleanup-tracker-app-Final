@@ -421,7 +421,7 @@ const ManagerDashboard = memo(function ManagerDashboard({ jobs, users, currentUs
 	const detailEvents = (jobDetails?.events || detailJob?.events || []).filter(event => event?.type);
 
 	return (
-		<div className="space-y-8 text-[color:var(--x-text-primary)]">
+		<div className="mx-auto max-w-[1600px] space-y-8 text-[color:var(--x-text-primary)]">
 			<header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 				<div className="space-y-1">
 					<h2 className="text-2xl font-semibold">Operations Command</h2>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { V2 } from '../utils/v2Client';
 import { ensureServiceTypeCatalog, DEFAULT_SERVICE_TYPES } from '../utils/serviceTypes';
 
@@ -55,6 +55,15 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
   const [loading, setLoading] = useState(autoFetch);
   const [error, setError] = useState(null);
 
+  // Track mount status to prevent setState on unmounted component
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Fetch settings with retry logic
   const fetchSettings = useCallback(async () => {
     if (!currentUser || !currentUser.id) {
@@ -77,10 +86,15 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
       // Enhanced error handling with retries for network failures
       const fetchWithRetry = async (retries = 2) => {
         for (let i = 0; i <= retries; i++) {
+          // Check if component is still mounted before continuing
+          if (!isMountedRef.current) return null;
+
           try {
             return await V2.get('/settings');
           } catch (error) {
             if (i === retries) throw error;
+            if (!isMountedRef.current) return null; // Check before delay
+
             Logger.warn(`Retry ${i + 1} for /settings`, { error: error.message });
             await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1))); // Exponential backoff
           }
@@ -88,6 +102,7 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
       };
 
       const response = await fetchWithRetry().catch(() => {
+        if (!isMountedRef.current) return null;
         Logger.warn('Settings endpoint failed, using defaults');
         return {
           data: {
@@ -96,6 +111,9 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
           }
         };
       });
+
+      // Don't update state if component unmounted
+      if (!isMountedRef.current || !response) return;
 
       const settingsData = response.data || {
         siteTitle: 'Cleanup Tracker',
@@ -110,15 +128,19 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
         serviceTypes: ensureServiceTypeCatalog(settingsData.serviceTypes)
       };
 
-      setSettings(sanitizedSettings);
-      setError(null);
+      if (isMountedRef.current) {
+        setSettings(sanitizedSettings);
+        setError(null);
 
-      const loadTime = performance.now() - startTime;
-      Logger.info('Settings fetched successfully', {
-        loadTime: `${loadTime.toFixed(2)}ms`,
-        siteTitle: sanitizedSettings.siteTitle
-      });
+        const loadTime = performance.now() - startTime;
+        Logger.info('Settings fetched successfully', {
+          loadTime: `${loadTime.toFixed(2)}ms`,
+          siteTitle: sanitizedSettings.siteTitle
+        });
+      }
     } catch (err) {
+      if (!isMountedRef.current) return;
+
       Logger.error('Failed to fetch settings', err, { userId: currentUser?.id });
       const errorMessage = err.response?.data?.error || err.message || 'Failed to load settings';
       setError(errorMessage);
@@ -128,7 +150,9 @@ export function useSettings(currentUser, { autoFetch = true } = {}) {
         serviceTypes: DEFAULT_SERVICE_TYPES
       });
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [currentUser]);
 

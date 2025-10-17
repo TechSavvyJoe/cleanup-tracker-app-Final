@@ -125,6 +125,28 @@ jobSchema.index({ date: 1, status: 1 });
 jobSchema.index({ serviceType: 1, status: 1 });
 jobSchema.index({ priority: 1, status: 1, startTime: 1 });
 
+// Additional indexes for performance optimization
+jobSchema.index({ completedAt: -1 }); // For date range queries in reports
+jobSchema.index({ completedAt: -1, status: 1 }); // For filtered date queries
+jobSchema.index({ technicianId: 1, completedAt: -1 }); // For technician performance reports
+jobSchema.index({ salesPerson: 1, completedAt: -1 }); // For salesperson reports
+jobSchema.index({ createdAt: -1 }); // For job creation time queries
+jobSchema.index({ qcRequired: 1, status: 1 }, { sparse: true }); // Sparse index for QC queries
+
+// Text index for search functionality
+jobSchema.index({
+  vin: 'text',
+  stockNumber: 'text',
+  vehicleDescription: 'text'
+}, {
+  name: 'job_search_index',
+  weights: {
+    vin: 10,
+    stockNumber: 5,
+    vehicleDescription: 1
+  }
+});
+
 // Virtual for duration calculation
 jobSchema.virtual('durationMinutes').get(function() {
     if (this.duration) return this.duration;
@@ -150,6 +172,26 @@ jobSchema.virtual('isOverdue').get(function() {
     const now = new Date();
     const expectedEnd = new Date(this.startTime.getTime() + this.expectedDuration * 60 * 1000);
     return now > expectedEnd;
+});
+
+// Pre-save hook to limit technician sessions array size
+jobSchema.pre('save', function(next) {
+    const MAX_SESSIONS = 100;
+
+    if (this.technicianSessions && this.technicianSessions.length > MAX_SESSIONS) {
+        // Keep only the most recent 100 sessions
+        this.technicianSessions = this.technicianSessions
+            .sort((a, b) => (b.startTime || 0) - (a.startTime || 0))
+            .slice(0, MAX_SESSIONS);
+
+        console.warn('Technician sessions truncated', {
+            jobId: this._id,
+            originalCount: this.technicianSessions.length,
+            newCount: MAX_SESSIONS
+        });
+    }
+
+    next();
 });
 
 // Method to pause job

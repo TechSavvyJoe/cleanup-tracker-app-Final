@@ -156,12 +156,14 @@ const Toast = ({
         </div>
       )}
 
-      <style dangerouslySetInnerHTML={{__html: `
-        @keyframes toast-progress {
-          from { width: 100%; }
-          to { width: 0%; }
-        }
-      `}} />
+      <style>
+        {`
+          @keyframes toast-progress {
+            from { width: 100%; }
+            to { width: 0%; }
+          }
+        `}
+      </style>
     </div>
   );
 };

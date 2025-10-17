@@ -64,21 +64,82 @@ const SettingsPanel = ({ isOpen, onClose, currentTheme, onThemeChange, userRole 
     link.click();
   };
 
+  const validateSettings = (settings) => {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      throw new Error('Settings must be an object');
+    }
+
+    // Whitelist of allowed settings keys
+    const allowedKeys = [
+      'theme', 'fontSize', 'notifications', 'autoRefresh',
+      'refreshInterval', 'language', 'timezone', 'dateFormat'
+    ];
+
+    // Filter to only allowed keys
+    const sanitized = {};
+    for (const [key, value] of Object.entries(settings)) {
+      if (allowedKeys.includes(key)) {
+        // Basic type validation
+        if (key === 'refreshInterval' && typeof value !== 'number') continue;
+        if (key === 'notifications' && typeof value !== 'boolean') continue;
+        sanitized[key] = value;
+      }
+    }
+
+    return sanitized;
+  };
+
   const importSettings = (event) => {
     const file = event.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const imported = JSON.parse(e.target.result);
-          setSettings(imported);
-          localStorage.setItem('userSettings', JSON.stringify(imported));
-        } catch (error) {
-          alert('Invalid settings file');
-        }
-      };
-      reader.readAsText(file);
+    if (!file) return;
+
+    // Validate file size (max 1MB)
+    if (file.size > 1024 * 1024) {
+      console.error('Settings file too large');
+      if (window.toast) {
+        window.toast.error('Settings file too large (max 1MB)');
+      } else {
+        alert('Settings file too large (max 1MB)');
+      }
+      return;
     }
+
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const imported = JSON.parse(e.target.result);
+        const sanitized = validateSettings(imported);
+
+        setSettings(sanitized);
+        localStorage.setItem('userSettings', JSON.stringify(sanitized));
+
+        if (window.toast) {
+          window.toast.success('Settings imported successfully');
+        } else {
+          alert('Settings imported successfully');
+        }
+      } catch (error) {
+        console.error('Settings import error:', error);
+        const errorMsg = error.message || 'Invalid settings file format';
+        if (window.toast) {
+          window.toast.error(`Import failed: ${errorMsg}`);
+        } else {
+          alert(`Import failed: ${errorMsg}`);
+        }
+      }
+    };
+
+    reader.onerror = () => {
+      console.error('Failed to read settings file');
+      if (window.toast) {
+        window.toast.error('Failed to read settings file');
+      } else {
+        alert('Failed to read settings file');
+      }
+    };
+
+    reader.readAsText(file);
   };
 
   if (!isOpen) return null;

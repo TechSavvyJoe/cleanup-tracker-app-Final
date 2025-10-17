@@ -1,9 +1,17 @@
-require('dotenv').config();
+// Load environment variables
+const path = require('path');
+const dotenv = require('dotenv');
+
+// Load .env.production in production, .env otherwise
+const envFile = process.env.NODE_ENV === 'production'
+  ? path.join(__dirname, '.env.production')
+  : path.join(__dirname, '.env');
+
+dotenv.config({ path: envFile });
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const path = require('path');
 const axios = require('axios');
 const helmet = require('helmet');
 const compression = require('compression');

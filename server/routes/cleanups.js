@@ -1,9 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const passport = require('passport');
 const Cleanup = require('../models/Cleanup');
 const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
 const logger = require('../utils/logger');
+
+// Apply authentication middleware to all routes
+router.use(passport.authenticate('jwt', { session: false }));
 
 // @route   POST api/cleanups/start
 // @desc    Start a new cleanup

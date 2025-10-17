@@ -89,7 +89,8 @@ describe('UsersView', () => {
         name: 'New Detailer',
         pin: '9876',
         role: 'manager',
-        phoneNumber: '5557654321'
+        phoneNumber: '5557654321',
+        employeeNumber: '9876'
       });
     });
 

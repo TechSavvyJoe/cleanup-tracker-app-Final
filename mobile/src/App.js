@@ -922,13 +922,39 @@ function DetailerDashboardScreen() {
     }
     setRefreshing(true);
     try {
-      const [summaryResponse, jobsResponse] = await Promise.all([
+      // Use allSettled to handle partial failures gracefully
+      const results = await Promise.allSettled([
         getDashboardSummary({ baseUrl, token }),
         fetchJobs({ baseUrl, token })
       ]);
-      setSummary(summaryResponse);
-      setJobs(Array.isArray(jobsResponse) ? jobsResponse : []);
-      setError('');
+
+      let hasError = false;
+      const errors = [];
+
+      // Process summary result
+      if (results[0].status === 'fulfilled') {
+        setSummary(results[0].value);
+      } else {
+        console.error('Summary load failed', results[0].reason);
+        errors.push('summary');
+        hasError = true;
+      }
+
+      // Process jobs result (independent of summary)
+      if (results[1].status === 'fulfilled') {
+        const jobsData = results[1].value;
+        setJobs(Array.isArray(jobsData) ? jobsData : []);
+      } else {
+        console.error('Jobs load failed', results[1].reason);
+        errors.push('jobs');
+        hasError = true;
+      }
+
+      if (hasError) {
+        setError(`Failed to load ${errors.join(' and ')}. Pull to refresh.`);
+      } else {
+        setError('');
+      }
     } catch (err) {
       console.error('Dashboard load failed', err);
       setError(err.response?.data?.error || err.message || 'Failed to load dashboard data.');

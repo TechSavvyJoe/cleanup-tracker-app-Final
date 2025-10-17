@@ -41,17 +41,53 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Safe parseInt that validates input and prevents injection
+function parsePositiveInt(value, defaultValue, max = null) {
+  if (value == null || value === '') return defaultValue;
+
+  // Convert to string and strip non-numeric characters (except leading minus)
+  const cleaned = String(value).replace(/[^0-9-]/g, '');
+  const parsed = parseInt(cleaned, 10);
+
+  // Validate result
+  if (Number.isNaN(parsed) || parsed < 1) {
+    return defaultValue;
+  }
+
+  // Apply max limit if specified
+  return max ? Math.min(parsed, max) : parsed;
+}
+
+// Middleware to validate MongoDB ObjectId
+function validateObjectId(paramName = 'id') {
+  return (req, res, next) => {
+    const id = req.params[paramName];
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    next();
+  };
+}
+
 function sanitizeUser(userDoc) {
   if (!userDoc) { return null; }
   const user = userDoc.toObject({ virtuals: true });
-  delete user.pinHash;
-  delete user.passwordHash;
-  delete user._plainPin;
-  delete user._plainPassword;
-  user.id = String(user._id);
-  delete user._id;
-  delete user.__v;
-  return user;
+
+  // Use destructuring to exclude sensitive fields (better performance than delete)
+  const {
+    pinHash,
+    passwordHash,
+    _plainPin,
+    _plainPassword,
+    _id,
+    __v,
+    ...sanitized
+  } = user;
+
+  // Add computed fields
+  sanitized.id = String(_id);
+
+  return sanitized;
 }
 
 async function findUserByCredential(identifier) {
@@ -71,11 +107,44 @@ async function findUserByPin(pin) {
   if (!pin) { return null; }
   const candidates = await V2User.find({
     pinHash: { $exists: true, $ne: null },
-    isActive: { $ne: false }
-  });
+    isActive: { $ne: false },
+    // Exclude locked accounts
+    $or: [
+      { lockUntil: { $exists: false } },
+      { lockUntil: { $lt: new Date() } }
+    ]
+  }).limit(100); // Limit exposure to prevent excessive bcrypt operations
+
   for (const candidate of candidates) {
-    if (await candidate.verifyPin(pin)) {
+    // Check if account is locked
+    if (candidate.lockUntil && candidate.lockUntil > new Date()) {
+      continue;
+    }
+
+    const isValidPin = await candidate.verifyPin(pin);
+
+    if (isValidPin) {
+      // Reset failed attempts on successful login
+      if (candidate.loginAttempts > 0 || candidate.lockUntil) {
+        candidate.loginAttempts = 0;
+        candidate.lockUntil = undefined;
+        await candidate.save();
+      }
       return candidate;
+    } else {
+      // Increment failed attempts
+      candidate.loginAttempts = (candidate.loginAttempts || 0) + 1;
+
+      // Lock account after 5 failed attempts
+      if (candidate.loginAttempts >= 5) {
+        candidate.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+        logger.warn('Account locked due to failed login attempts', {
+          userId: candidate._id,
+          employeeNumber: candidate.employeeNumber
+        });
+      }
+
+      await candidate.save();
     }
   }
   return null;
@@ -357,11 +426,45 @@ function computeJobDuration(job, endTime = new Date()) {
   if (!job.startTime) {
     return job.duration || 0;
   }
-  const end = endTime || new Date();
-  let duration = Math.round((end.getTime() - job.startTime.getTime()) / (1000 * 60));
-  if (job.pauseDuration) {
-    duration -= job.pauseDuration;
+
+  // Validate startTime is a valid date
+  const start = safeDate(job.startTime);
+  if (!start) {
+    logger.warn('Invalid startTime in computeJobDuration', {
+      jobId: job._id,
+      startTime: job.startTime
+    });
+    return job.duration || 0;
   }
+
+  const end = endTime || new Date();
+  let duration = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
+
+  // Check for NaN or negative duration
+  if (Number.isNaN(duration) || duration < 0) {
+    logger.warn('Invalid duration calculated', {
+      jobId: job._id,
+      startTime: job.startTime,
+      endTime: end,
+      calculatedDuration: duration
+    });
+    return job.duration || 0;
+  }
+
+  // Subtract pause duration if present and valid
+  if (job.pauseDuration && typeof job.pauseDuration === 'number' && job.pauseDuration > 0) {
+    duration -= job.pauseDuration;
+
+    // Warn if pause duration exceeds total duration (data integrity issue)
+    if (job.pauseDuration > duration + job.pauseDuration) {
+      logger.warn('Pause duration exceeds total duration', {
+        jobId: job._id,
+        totalDuration: duration + job.pauseDuration,
+        pauseDuration: job.pauseDuration
+      });
+    }
+  }
+
   return Math.max(0, duration);
 }
 
@@ -786,14 +889,22 @@ router.post('/users', async (req, res) => {
     return res.status(400).json({ error: 'name and pin are required' });
   }
 
+  if (!/^[0-9]{4}$/.test(String(pin))) {
+    return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+  }
+
   if (await isPinInUse(pin)) {
     return res.status(409).json({ error: 'PIN already in use' });
   }
 
+  const normalizedEmployeeNumber = employeeNumber
+    ? String(employeeNumber).toUpperCase()
+    : String(pin).trim();
+
   const user = new V2User({
     name: name.trim(),
     role,
-    employeeNumber: employeeNumber ? String(employeeNumber).toUpperCase() : undefined,
+    employeeNumber: normalizedEmployeeNumber,
     phoneNumber,
     department,
     uid: uid || (role === 'detailer' ? `detailer-${Date.now()}` : undefined)
@@ -805,7 +916,7 @@ router.post('/users', async (req, res) => {
   res.status(201).json(sanitizeUser(user));
 });
 
-router.put('/users/:id', async (req, res) => {
+router.put('/users/:id', validateObjectId('id'), async (req, res) => {
   const { name, pin, employeeNumber, phoneNumber, department, role, isActive } = req.body || {};
   const { id } = req.params;
 
@@ -815,10 +926,16 @@ router.put('/users/:id', async (req, res) => {
   }
 
   if (pin) {
+    if (!/^[0-9]{4}$/.test(String(pin))) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+    }
     if (await isPinInUse(pin, id)) {
       return res.status(409).json({ error: 'PIN already in use' });
     }
     user.pin = pin;
+    if (!employeeNumber) {
+      user.employeeNumber = String(pin).trim();
+    }
   }
 
   if (name !== undefined) { user.name = name; }
@@ -834,9 +951,53 @@ router.put('/users/:id', async (req, res) => {
   res.json(sanitizeUser(user));
 });
 
-router.delete('/users/:id', async (req, res) => {
-  await V2User.findByIdAndDelete(req.params.id);
-  res.status(204).end();
+router.delete('/users/:id', validateObjectId('id'), async (req, res) => {
+  try {
+    const user = await V2User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check for active jobs assigned to this user
+    const activeJobs = await Job.countDocuments({
+      $or: [
+        { technicianId: req.params.id },
+        { activeTechnicians: req.params.id }
+      ],
+      status: { $in: ['In Progress', 'Paused', 'QC Required'] }
+    });
+
+    if (activeJobs > 0) {
+      return res.status(400).json({
+        error: 'Cannot delete user with active jobs',
+        activeJobs,
+        message: 'Please complete or reassign active jobs before deleting this user'
+      });
+    }
+
+    // Soft delete instead of hard delete to preserve data integrity
+    user.isActive = false;
+    user.deletedAt = new Date();
+    await user.save();
+
+    logger.info('User soft deleted', {
+      userId: req.params.id,
+      employeeNumber: user.employeeNumber,
+      name: user.name
+    });
+
+    res.json({
+      message: 'User deactivated successfully',
+      userId: req.params.id
+    });
+  } catch (error) {
+    logger.error('Delete user error', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.params.id
+    });
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
 });
 
 // Jobs
@@ -922,7 +1083,7 @@ router.post('/jobs', async (req, res) => {
   }
 });
 
-router.put('/jobs/:id/complete', async (req, res) => {
+router.put('/jobs/:id/complete', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) { return res.status(404).json({ error: 'Not found' }); }
   const end = new Date();
@@ -950,11 +1111,11 @@ async function handlePauseJob(req, res) {
 }
 
 // Pause job
-router.put('/jobs/:id/pause', handlePauseJob);
+router.put('/jobs/:id/pause', validateObjectId('id'), handlePauseJob);
 router.post('/jobs/:id/pause', handlePauseJob);
 
 // Resume job
-router.put('/jobs/:id/resume', async (req, res) => {
+router.put('/jobs/:id/resume', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
@@ -1013,13 +1174,24 @@ async function handleRemoveTechnician(req, res) {
 }
 
 // Add technician to job
-router.put('/jobs/:id/add-technician', handleAddTechnician);
+router.put('/jobs/:id/add-technician', validateObjectId('id'), handleAddTechnician);
 router.post('/jobs/:id/add-technician', handleAddTechnician);
 router.post('/jobs/:id/remove-technician', handleRemoveTechnician);
-router.delete('/jobs/:id/technicians/:technicianId', handleRemoveTechnician);
+router.delete('/jobs/:id/technicians/:technicianId', validateObjectId('id'), handleRemoveTechnician);
 router.post('/jobs/:id/technicians/:technicianId/end', handleRemoveTechnician);
 
-router.put('/jobs/:id/status', async (req, res) => {
+// Define valid status transitions
+const VALID_TRANSITIONS = {
+  'Pending': ['In Progress', 'Cancelled'],
+  'In Progress': ['Paused', 'QC Required', 'Completed', 'Cancelled'],
+  'Paused': ['In Progress', 'Cancelled'],
+  'QC Required': ['QC Approved', 'In Progress', 'Cancelled'], // Can send back for rework
+  'QC Approved': ['Completed'],
+  'Completed': [], // Final state
+  'Cancelled': []  // Final state
+};
+
+router.put('/jobs/:id/status', validateObjectId('id'), async (req, res) => {
   const { status, qcNotes, pauseReason } = req.body || {};
   if (!status || typeof status !== 'string') {
     return res.status(400).json({ error: 'status required' });
@@ -1043,6 +1215,19 @@ router.put('/jobs/:id/status', async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) {
     return res.status(404).json({ error: 'Not found' });
+  }
+
+  // Validate state transition
+  const currentStatus = job.status || 'Pending';
+  const validNextStates = VALID_TRANSITIONS[currentStatus] || [];
+
+  if (!validNextStates.includes(normalizedStatus)) {
+    return res.status(400).json({
+      error: `Invalid transition from ${currentStatus} to ${normalizedStatus}`,
+      currentStatus,
+      requestedStatus: normalizedStatus,
+      validTransitions: validNextStates
+    });
   }
 
   const now = new Date();
@@ -1196,7 +1381,7 @@ async function handleQcCompletion(req, res) {
 }
 
 // Complete QC
-router.put('/jobs/:id/qc-complete', handleQcCompletion);
+router.put('/jobs/:id/qc-complete', validateObjectId('id'), handleQcCompletion);
 router.post('/jobs/:id/qc', handleQcCompletion);
 
 // Communication endpoints
@@ -1239,13 +1424,13 @@ router.post('/jobs/:id/send-message', handleSendMessage);
 router.post('/jobs/:id/message', handleSendMessage);
 
 // Get job communications
-router.get('/jobs/:id/messages', async (req, res) => {
+router.get('/jobs/:id/messages', validateObjectId('id'), async (req, res) => {
   // In future, retrieve message history from database
   res.json({ messages: [] });
 });
 
 // Additional job endpoints used by client UI
-router.get('/jobs/:id', async (req, res) => {
+router.get('/jobs/:id', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
   // Minimal details/events structure expected by UI
@@ -1260,7 +1445,7 @@ router.get('/jobs/:id', async (req, res) => {
   });
 });
 
-router.patch('/jobs/:id', async (req, res) => {
+router.patch('/jobs/:id', validateObjectId('id'), async (req, res) => {
   const allowed = ['priority', 'salesPerson'];
   const updates = {};
   allowed.forEach(k => { if (req.body[k] != null) updates[k] = req.body[k]; });
@@ -1269,7 +1454,7 @@ router.patch('/jobs/:id', async (req, res) => {
   res.json(jobToResponse(job));
 });
 
-router.put('/jobs/:id/start', async (req, res) => {
+router.put('/jobs/:id/start', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
   job.startTime = job.startTime || new Date();
@@ -1278,7 +1463,7 @@ router.put('/jobs/:id/start', async (req, res) => {
   res.json(jobToResponse(job));
 });
 
-router.put('/jobs/:id/stop', async (req, res) => {
+router.put('/jobs/:id/stop', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
   const { technicianId, userId, endTime } = req.body || {};
@@ -1290,7 +1475,7 @@ router.put('/jobs/:id/stop', async (req, res) => {
   res.json(jobToResponse(job));
 });
 
-router.put('/jobs/:id/join', async (req, res) => {
+router.put('/jobs/:id/join', validateObjectId('id'), async (req, res) => {
   const { userId, startTime } = req.body || {};
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
@@ -1351,8 +1536,8 @@ router.get('/vehicles', async (req, res) => {
       limit = '100'
     } = req.query || {};
 
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const perPage = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+    const pageNum = parsePositiveInt(page, 1);
+    const perPage = parsePositiveInt(limit, 100, 500);
     const skip = (pageNum - 1) * perPage;
 
     const find = {};
@@ -1492,24 +1677,59 @@ router.post('/vehicles/refresh', async (req, res) => {
     const cleanInt = (v) => { const n = parseInt(String(v || '').replace(/[^0-9-]/g, ''), 10); return Number.isNaN(n) ? null : n; };
     const cleanStr = (v) => (v == null ? '' : String(v).trim());
     const cleanPrice = (v) => (v == null ? '' : String(v).replace(/[^0-9.]/g, '').trim());
-    const ops = rows.filter(r => cleanStr(r.vin)).map(r => {
+    const normalizeCondition = (value) => {
+      const normalized = cleanStr(value).toLowerCase();
+      if (normalized === 'new' || normalized === 'n') return 'New';
+      if (normalized === 'certified' || normalized === 'c') return 'Certified';
+      if (normalized === 'used' || normalized === 'u' || normalized === 'pre-owned') return 'Used';
+      return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Used';
+    };
+
+    let skipped = 0;
+    const ops = rows.map((r) => {
       const doc = {
-        newUsed: cleanStr(r.newUsed), stockNumber: cleanStr(r.stockNumber), vehicle: cleanStr(r.vehicle),
-        year: cleanInt(r.year), make: cleanStr(r.make), model: cleanStr(r.model), body: cleanStr(r.body),
-        drivetrain: cleanStr(r.drivetrain), color: cleanStr(r.color), odometer: cleanStr(r.odometer), price: cleanPrice(r.price),
-        age: cleanInt(r.age), vin: cleanStr(r.vin), tags: cleanStr(r.tags), status: cleanStr(r.status)
+        newUsed: normalizeCondition(r.newUsed),
+        stockNumber: cleanStr(r.stockNumber),
+        vehicle: cleanStr(r.vehicle),
+        year: cleanInt(r.year),
+        make: cleanStr(r.make),
+        model: cleanStr(r.model),
+        body: cleanStr(r.body),
+        drivetrain: cleanStr(r.drivetrain),
+        color: cleanStr(r.color),
+        odometer: cleanStr(r.odometer),
+        price: cleanPrice(r.price),
+        age: cleanInt(r.age),
+        vin: cleanStr(r.vin).toUpperCase(),
+        tags: cleanStr(r.tags),
+        status: cleanStr(r.status)
       };
-      return { updateOne: { filter: { vin: doc.vin }, update: { $set: doc }, upsert: true } };
+      const requiredFieldsPresent = doc.vin && doc.stockNumber && doc.vehicle && doc.year != null && doc.make && doc.model && doc.odometer && doc.price && doc.age != null;
+      if (!requiredFieldsPresent) {
+        skipped += 1;
+        return null;
+      }
+      return {
+        updateOne: {
+          filter: { vin: doc.vin },
+          update: { $set: doc },
+          upsert: true,
+          runValidators: true,
+          setDefaultsOnInsert: true
+        }
+      };
     });
-    if (!ops.length) return res.status(400).json({ success: false, message: 'No VIN rows found.' });
-    const result = await Vehicle.bulkWrite(ops, { ordered: false });
+    const validOps = ops.filter(Boolean);
+    if (!validOps.length) return res.status(400).json({ success: false, message: 'No valid rows with VIN/stock were found.' });
+    const result = await Vehicle.bulkWrite(validOps, { ordered: false });
     const total = await Vehicle.countDocuments();
     res.json({
       success: true,
       source: SHEET_URL,
       upserted: result.upsertedCount || 0,
       modified: result.modifiedCount || 0,
-      total
+      total,
+      skipped
     });
   } catch (e) {
     logger.error('Refresh inventory failed', { error: e.message, stack: e.stack });

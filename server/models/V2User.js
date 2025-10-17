@@ -60,6 +60,16 @@ const V2UserSchema = new Schema({
     },
     lastLogin: {
         type: Date
+    },
+    loginAttempts: {
+        type: Number,
+        default: 0
+    },
+    lockUntil: {
+        type: Date
+    },
+    deletedAt: {
+        type: Date
     }
 }, {
     timestamps: true

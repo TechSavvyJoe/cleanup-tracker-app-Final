@@ -38,7 +38,7 @@ function fetchJson(u, bearer) {
             const parsedBody = JSON.parse(raw);
             return reject(new Error(`Status ${statusCode} - ${JSON.stringify(parsedBody)}`));
           } catch (e) {
-            return reject(new Error(`Status ${statusCode} - ${raw.substr(0, 200)}`));
+            return reject(new Error(`Status ${statusCode} - ${raw.slice(0, 200)}`));
           }
         }
         try {
@@ -58,12 +58,20 @@ function fetchJson(u, bearer) {
 (async function main(){
   try{
     const diag = await fetchJson(diagPath, token);
-    const ok = diag && diag.vehicles != null && diag.jobs != null && diag.users != null;
+    // Validate response structure: vehicles and jobs should be numbers, users should be an array
+    const ok = diag
+      && typeof diag.vehicles === 'number'
+      && typeof diag.jobs === 'number'
+      && Array.isArray(diag.users);
     if(!ok){
-      console.error('Diag missing fields', Object.keys(diag||{}));
+      console.error('Diag missing or invalid fields. Expected: {vehicles: number, jobs: number, users: array}');
+      console.error('Received:', Object.keys(diag||{}), '=', JSON.stringify(diag));
       process.exit(2);
     }
     console.log('Diag OK:', Object.keys(diag));
+    console.log('  - vehicles:', diag.vehicles);
+    console.log('  - jobs:', diag.jobs);
+    console.log('  - users:', diag.users.length);
     process.exit(0);
   }catch(e){
     console.error('Failed to fetch diag:', e && e.message);

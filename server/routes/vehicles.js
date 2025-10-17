@@ -3,12 +3,16 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
+const passport = require('passport');
 const Vehicle = require('../models/Vehicle');
 const logger = require('../utils/logger');
 
+// Apply authentication middleware to all routes
+router.use(passport.authenticate('jwt', { session: false }));
+
 // @route   GET api/vehicles/vin/:vin
 // @desc    Get vehicle by VIN
-// @access  Public
+// @access  Private
 router.get('/vin/:vin', async (req, res) => {
     try {
         const vehicle = await Vehicle.findOne({ vin: req.params.vin });
@@ -30,9 +34,14 @@ router.get('/vin/:vin', async (req, res) => {
     }
 });
 
+// Helper function to escape regex special characters to prevent ReDoS attacks
+const escapeRegex = (str) => {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 // @route   GET api/vehicles
 // @desc    Get all vehicles
-// @access  Public
+// @access  Private
 router.get('/', async (req, res) => {
     try {
         const { search, newUsed, make, limit = 100 } = req.query;
@@ -41,11 +50,12 @@ router.get('/', async (req, res) => {
 
         // Apply filters if provided
         if (search) {
+            const safeSearch = escapeRegex(search);
             query.$or = [
-                { vin: { $regex: search, $options: 'i' } },
-                { stockNumber: { $regex: search, $options: 'i' } },
-                { make: { $regex: search, $options: 'i' } },
-                { model: { $regex: search, $options: 'i' } }
+                { vin: { $regex: safeSearch, $options: 'i' } },
+                { stockNumber: { $regex: safeSearch, $options: 'i' } },
+                { make: { $regex: safeSearch, $options: 'i' } },
+                { model: { $regex: safeSearch, $options: 'i' } }
             ];
         }
 
@@ -54,7 +64,8 @@ router.get('/', async (req, res) => {
         }
 
         if (make) {
-            query.make = { $regex: make, $options: 'i' };
+            const safeMake = escapeRegex(make);
+            query.make = { $regex: safeMake, $options: 'i' };
         }
 
         const vehicles = await Vehicle.find(query)

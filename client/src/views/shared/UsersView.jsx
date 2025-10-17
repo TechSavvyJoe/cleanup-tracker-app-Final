@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from 'react';
+import React, { useState, useCallback, useMemo, memo } from 'react';
 import PropTypes from 'prop-types';
 import { V2 } from '../../utils/v2Client';
 import { useToast } from '../../components/Toast';
@@ -13,6 +13,31 @@ const UsersView = memo(function UsersView({ users, detailers, onDeleteUser, onRe
   const toast = useToast();
   const [newUser, setNewUser] = useState({ name: '', pin: '', role: 'detailer', phone: '' });
   const [isAdding, setIsAdding] = useState(false);
+
+  const roster = useMemo(() => {
+    const normalized = Object.values(users || {});
+    if (normalized.length > 0) {
+      return normalized;
+    }
+    return Array.isArray(detailers) ? detailers : [];
+  }, [users, detailers]);
+
+  const detailerCount = useMemo(
+    () => roster.filter(member => member.role === 'detailer').length,
+    [roster]
+  );
+  const managerCount = useMemo(
+    () => roster.filter(member => member.role === 'manager').length,
+    [roster]
+  );
+  const salesCount = useMemo(
+    () => roster.filter(member => member.role === 'salesperson').length,
+    [roster]
+  );
+  const sortedRoster = useMemo(
+    () => roster.slice().sort((a, b) => a.name.localeCompare(b.name)),
+    [roster]
+  );
 
   const handleAddDetailer = useCallback(async (e) => {
     e.preventDefault();
@@ -38,7 +63,8 @@ const UsersView = memo(function UsersView({ users, detailers, onDeleteUser, onRe
         name: newUser.name.trim(),
         pin: newUser.pin,
         role: newUser.role,
-        phoneNumber: newUser.phone
+        phoneNumber: newUser.phone,
+        employeeNumber: newUser.pin
       });
 
       setNewUser({ name: '', pin: '', role: 'detailer', phone: '' });
@@ -62,10 +88,6 @@ const UsersView = memo(function UsersView({ users, detailers, onDeleteUser, onRe
     }
   }, [newUser, onRefresh, toast]);
 
-  const activeRoster = detailers.length;
-  const managerCount = Object.values(users || {}).filter((u) => u.role === 'manager').length;
-  const salesCount = Object.values(users || {}).filter((u) => u.role === 'salesperson').length;
-
   return (
     <div className="space-y-8 text-[color:var(--x-text-primary)]">
       <header className="bg-gradient-to-r from-blue-500/10 via-blue-600/5 to-transparent border border-blue-600/20 rounded-3xl px-6 py-5 shadow-lg shadow-blue-500/5">
@@ -80,7 +102,7 @@ const UsersView = memo(function UsersView({ users, detailers, onDeleteUser, onRe
           <div className="grid grid-cols-3 gap-3 w-full lg:w-auto">
             <div className="rounded-2xl border border-gray-800 bg-black/70 px-4 py-3">
               <p className="text-[10px] uppercase tracking-[0.25em] text-gray-500">Active detailers</p>
-              <p className="mt-1 text-lg font-semibold text-white">{activeRoster}</p>
+              <p className="mt-1 text-lg font-semibold text-white">{detailerCount}</p>
               <p className="mt-1 text-xs text-gray-500">Ready to clock in today</p>
             </div>
             <div className="rounded-2xl border border-gray-800 bg-black/70 px-4 py-3">
@@ -209,12 +231,12 @@ const UsersView = memo(function UsersView({ users, detailers, onDeleteUser, onRe
           </div>
 
           <div className="mt-5 space-y-4 max-h-[520px] overflow-y-auto pr-1">
-            {detailers.length === 0 ? (
+            {sortedRoster.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-gray-700 bg-black/50 px-6 py-8 text-center text-sm text-gray-500">
                 No team members yet. Add your first teammate to kick things off.
               </div>
             ) : (
-              detailers.map((member) => {
+              sortedRoster.map((member) => {
                 const theme = roleTheme[member.role] || roleTheme.detailer;
                 return (
                   <div key={member.id || member._id} className="rounded-2xl border border-gray-800 bg-black/60 px-5 py-5 shadow-inner">

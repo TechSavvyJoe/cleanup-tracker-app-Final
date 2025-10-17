@@ -94,9 +94,17 @@ function SettingsView({ settings, onSettingsChange }) {
   }, []);
 
   const handleToggleActive = useCallback((id) => {
-    setServiceTypes((prev) => prev.map((entry) => (
-      entry.id === id ? { ...entry, isActive: entry.isActive === false } : entry
-    )));
+    setServiceTypes((prev) => prev.map((entry) => {
+      if (entry.id !== id) {
+        return entry;
+      }
+      const currentlyActive = entry.isActive !== false;
+      const next = { ...entry, isActive: !currentlyActive };
+      if (next.isActive) {
+        delete next.isActive;
+      }
+      return next;
+    }));
   }, []);
 
   const handleServiceTypeReorder = useCallback((id, direction) => {

@@ -391,10 +391,144 @@ function LoginForm({ onLogin }) {
                                 </div>
                               ))}
                             </div>
-                          </div>
-                        </div>
-                      </div>
-                      
+          </div>
+        </div>
+      </div>
+
+      <div className="px-4 sm:px-6 lg:px-10 xl:px-16 py-6">
+        <div className="mx-auto w-full max-w-[1600px] space-y-10">
+          {/* Detailer Views */}
+          {(user.role === 'detailer' || user.role === 'technician') && (
+            <>
+              {view === 'dashboard' && (
+                <DetailerDashboard
+                  user={user}
+                  jobs={activeJobs}
+                  completedJobs={completedJobs}
+                  userActiveJob={userActiveJob}
+                  onStopWork={handleStopWork}
+                  onRefresh={loadInitialData}
+                  onOpenScanner={() => setShowScanner(true)}
+                  onGoToNewJob={() => { setView('jobs'); closeSidebar(); }}
+                />
+              )}
+              {view === 'jobs' && (
+                <DetailerNewJob
+                  user={user}
+                  onSearch={handleSearch}
+                  searchResults={searchResults}
+                  isSearching={isSearching}
+                  searchTerm={searchTerm}
+                  setSearchTerm={setSearchTerm}
+                  showScanner={showScanner}
+                  setShowScanner={setShowScanner}
+                  onScanSuccess={handleScanSuccess}
+                  hasSearched={hasSearched}
+                  serviceTypesCatalog={serviceCatalog}
+                  onJobCreated={async () => {
+                    await loadInitialData();
+                    setView('dashboard');
+                    closeSidebar();
+                  }}
+                />
+              )}
+              {view === 'me' && <MySettingsView user={user} />}
+            </>
+          )}
+
+          {/* Manager Views */}
+          {user.role === 'manager' && (
+            <>
+              {view === 'dashboard' && (
+                <ManagerDashboard
+                  jobs={jobs}
+                  users={users}
+                  currentUser={user}
+                  onRefresh={loadInitialData}
+                  dashboardStats={dashboardStats}
+                />
+              )}
+              {view === 'jobs' && (
+                <JobsView
+                  jobs={jobs}
+                  users={users}
+                  currentUser={user}
+                  onRefresh={loadInitialData}
+                />
+              )}
+              {view === 'qc' && (
+                <QCView
+                  jobs={jobs}
+                  users={users}
+                  currentUser={user}
+                  onRefresh={loadInitialData}
+                />
+              )}
+              {view === 'users' && (
+                <UsersView
+                  users={users}
+                  detailers={detailers}
+                  onDeleteUser={deleteUser}
+                  onRefresh={loadInitialData}
+                />
+              )}
+              {view === 'reports' && <ReportsView jobs={jobs} users={users} />}
+              {view === 'inventory' && (
+                <EnterpriseInventory
+                  theme={theme}
+                  currentUser={user}
+                  serviceTypes={serviceCatalog}
+                  onVehicleUpdated={(updatedVehicle) => {
+                    if (!updatedVehicle) return;
+                    loadInitialData();
+                  }}
+                  onCreateJob={async (vehicle) => {
+                    if (!vehicle) return;
+                    try {
+                      const serviceTypeName = defaultServiceType?.name || 'Cleanup';
+                      const expectedDuration = defaultServiceType?.expectedMinutes || 60;
+                      await V2.post('/jobs', {
+                        technicianId: user.id,
+                        technicianName: user.name,
+                        vin: vehicle.vin,
+                        stockNumber: vehicle.stockNumber,
+                        vehicleDescription: `${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''}`.trim() || vehicle.vehicle || 'Vehicle',
+                        serviceType: serviceTypeName,
+                        expectedDuration,
+                        year: vehicle.year,
+                        make: vehicle.make,
+                        model: vehicle.model,
+                        vehicleColor: vehicle.color || ''
+                      });
+                      await loadInitialData();
+                      toast.success('Job created successfully');
+                    } catch (error) {
+                      const message = error?.response?.data?.error || error?.message || 'Failed to create job';
+                      toast.error(message);
+                      throw error;
+                    }
+                  }}
+                />
+              )}
+              {view === 'settings' && (
+                <SettingsView settings={settings} onSettingsChange={setSettings} />
+              )}
+              {view === 'me' && <MySettingsView user={user} />}
+            </>
+          )}
+
+          {/* Salesperson Views */}
+          {user.role === 'salesperson' && (
+            <>
+              {view === 'dashboard' && (
+                <SalespersonDashboard user={user} jobs={jobs} onRefresh={loadInitialData} />
+              )}
+              {view === 'me' && <MySettingsView user={user} />}
+            </>
+          )}
+        </div>
+      </div>
+
                       {/* Compact Professional Dial Pad */}
                       <div className="space-y-2 max-w-xs mx-auto mb-4">
                         {/* Row 1: 1, 2, 3 */}
@@ -1815,107 +1949,6 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
             </div>
           </div>
 
-          {/* Content Container - reduced padding for more space */}
-          <div className="p-3 sm:p-4">
-          {/* Detailer Views */}
-          {(user.role === 'detailer' || user.role === 'technician') && (
-            <>
-              {view === 'dashboard' && (
-                <DetailerDashboard
-                  user={user}
-                  jobs={activeJobs}
-                  completedJobs={completedJobs}
-                  userActiveJob={userActiveJob}
-                  onStopWork={handleStopWork}
-                  onRefresh={loadInitialData}
-                  onOpenScanner={() => setShowScanner(true)}
-                  onGoToNewJob={() => { setView('jobs'); closeSidebar(); }}
-                />
-              )}
-              {view === 'jobs' && (
-                <DetailerNewJob
-                  user={user}
-                  onSearch={handleSearch}
-                  searchResults={searchResults}
-                  isSearching={isSearching}
-                  searchTerm={searchTerm}
-                  setSearchTerm={setSearchTerm}
-                  showScanner={showScanner}
-                  setShowScanner={setShowScanner}
-                  onScanSuccess={handleScanSuccess}
-                  hasSearched={hasSearched}
-                  serviceTypesCatalog={serviceCatalog}
-                  onJobCreated={async () => {
-                    await loadInitialData();
-                    setView('dashboard');
-                    closeSidebar();
-                  }}
-                />
-              )}
-              {view === 'me' && <MySettingsView user={user} />}
-            </>
-          )}
-
-          {/* Manager Views */}
-          {user.role === 'manager' && (
-            <>
-              {view === 'dashboard' && <ManagerDashboard jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} dashboardStats={dashboardStats} />}
-              {view === 'jobs' && <JobsView jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} />}
-              {view === 'qc' && <QCView jobs={jobs} users={users} currentUser={user} onRefresh={loadInitialData} />}
-              {view === 'users' && <UsersView users={users} detailers={detailers} onDeleteUser={deleteUser} onRefresh={loadInitialData} />}
-              {view === 'reports' && <ReportsView jobs={jobs} users={users} />}
-              {view === 'inventory' && (
-                <EnterpriseInventory
-                  theme={theme}
-                  currentUser={user}
-                  serviceTypes={serviceCatalog}
-                  onVehicleUpdated={(updatedVehicle) => {
-                    if (!updatedVehicle) return;
-                    loadInitialData();
-                  }}
-                  onCreateJob={async (vehicle) => {
-                    if (!vehicle) return;
-                    try {
-                      const serviceTypeName = defaultServiceType?.name || 'Cleanup';
-                      const expectedDuration = defaultServiceType?.expectedMinutes || 60;
-                      await V2.post('/jobs', {
-                        technicianId: user.id,
-                        technicianName: user.name,
-                        vin: vehicle.vin,
-                        stockNumber: vehicle.stockNumber,
-                        vehicleDescription: `${vehicle.year || ''} ${vehicle.make || ''} ${vehicle.model || ''}`.trim() || vehicle.vehicle || 'Vehicle',
-                        serviceType: serviceTypeName,
-                        expectedDuration,
-                        year: vehicle.year,
-                        make: vehicle.make,
-                        model: vehicle.model,
-                        vehicleColor: vehicle.color || ''
-                      });
-                      await loadInitialData();
-                      toast.success('Job created successfully');
-                    } catch (error) {
-                      const message = error?.response?.data?.error || error?.message || 'Failed to create job';
-                      toast.error(message);
-                      throw error;
-                    }
-                  }}
-                />
-              )}
-              {view === 'settings' && <SettingsView settings={settings} onSettingsChange={setSettings} />}
-              {view === 'me' && <MySettingsView user={user} />}
-            </>
-          )}
-
-          {/* Salesperson Views */}
-          {user.role === 'salesperson' && (
-            <>
-              {view === 'dashboard' && <SalespersonDashboard user={user} jobs={jobs} onRefresh={loadInitialData} />}
-              {view === 'me' && <MySettingsView user={user} />}
-            </>
-          )}
-        </div>
-        </div>
-      </div>
 
       {/* 🚀 Enterprise Command Palette */}
       {showCommandPalette && (

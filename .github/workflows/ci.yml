@@ -22,8 +22,23 @@ jobs:
 
       - name: Install server & client dependencies
         run: |
-          npm ci --prefix server
-          npm ci --prefix client
+          set -e
+          # Use npm ci when a lockfile exists for reproducible installs; otherwise fall back to npm install
+          if [ -f server/package-lock.json ] || [ -f server/npm-shrinkwrap.json ]; then
+            echo "Using npm ci for server"
+            npm ci --prefix server
+          else
+            echo "No lockfile for server; using npm install"
+            npm --prefix server install
+          fi
+
+          if [ -f client/package-lock.json ] || [ -f client/npm-shrinkwrap.json ]; then
+            echo "Using npm ci for client"
+            npm ci --prefix client
+          else
+            echo "No lockfile for client; using npm install"
+            npm --prefix client install
+          fi
 
       - name: Lint client
         run: |

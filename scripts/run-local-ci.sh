@@ -49,7 +49,9 @@ done
 echo "Server is healthy"
 
 echo "=== Server: login to obtain token ==="
-RESP=$(curl -s -X POST -H "Content-Type: application/json" -d '{"pin":"1701"}' "http://localhost:5051/api/v2/auth/login" || true)
+# Allow overriding the test PIN via TEST_USER_PIN env var (useful for CI secrets); default to 1701 for local runs.
+PIN=${TEST_USER_PIN:-1701}
+RESP=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"pin\":\"$PIN\"}" "http://localhost:5051/api/v2/auth/login" || true)
 echo "login response head: ${RESP:0:200}"
 TOKEN=$(echo "$RESP" | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{try{const j=JSON.parse(s);if(j.tokens&&j.tokens.accessToken)console.log(j.tokens.accessToken);}catch(e){} })')
 if [ -z "$TOKEN" ]; then

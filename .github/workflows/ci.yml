@@ -68,11 +68,17 @@ jobs:
 
       - name: CI login to obtain access token
         id: login
+        env:
+          # Read the test PIN from repository secrets. Set TEST_USER_PIN in repo settings.
+          TEST_USER_PIN: ${{ secrets.TEST_USER_PIN }}
         run: |
-          # Use seeded test credentials to get an access token for diag endpoint
-          # Adjust credentials here if your seed data differs.
+          # Use seeded test credentials (from secrets) to get an access token for diag endpoint
+          if [ -z "$TEST_USER_PIN" ]; then
+            echo "ERROR: TEST_USER_PIN secret is not set. Set it in repository Secrets > Actions."
+            exit 2
+          fi
           resp=$(curl -s -X POST -H "Content-Type: application/json" \
-            -d '{"pin":"1701"}' http://localhost:5051/api/v2/auth/login || true)
+            -d "{\"pin\":\"$TEST_USER_PIN\"}" http://localhost:5051/api/v2/auth/login || true)
           echo "login response: $resp"
           token=$(echo "$resp" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(s);if(j.tokens&&j.tokens.accessToken)console.log(j.tokens.accessToken);}catch(e){} })")
           if [ -z "$token" ]; then

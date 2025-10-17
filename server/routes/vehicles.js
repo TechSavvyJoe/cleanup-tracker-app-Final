@@ -3,11 +3,16 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
+const passport = require('passport');
 const Vehicle = require('../models/Vehicle');
+const logger = require('../utils/logger');
+
+// Apply authentication middleware to all routes
+router.use(passport.authenticate('jwt', { session: false }));
 
 // @route   GET api/vehicles/vin/:vin
 // @desc    Get vehicle by VIN
-// @access  Public
+// @access  Private
 router.get('/vin/:vin', async (req, res) => {
     try {
         const vehicle = await Vehicle.findOne({ vin: req.params.vin });
@@ -21,7 +26,7 @@ router.get('/vin/:vin', async (req, res) => {
 
         res.json(vehicle);
     } catch (error) {
-        console.error('Error fetching vehicle by VIN:', error);
+        logger.error('Error fetching vehicle by VIN', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to fetch vehicle'
@@ -29,9 +34,14 @@ router.get('/vin/:vin', async (req, res) => {
     }
 });
 
+// Helper function to escape regex special characters to prevent ReDoS attacks
+const escapeRegex = (str) => {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 // @route   GET api/vehicles
 // @desc    Get all vehicles
-// @access  Public
+// @access  Private
 router.get('/', async (req, res) => {
     try {
         const { search, newUsed, make, limit = 100 } = req.query;
@@ -40,11 +50,12 @@ router.get('/', async (req, res) => {
 
         // Apply filters if provided
         if (search) {
+            const safeSearch = escapeRegex(search);
             query.$or = [
-                { vin: { $regex: search, $options: 'i' } },
-                { stockNumber: { $regex: search, $options: 'i' } },
-                { make: { $regex: search, $options: 'i' } },
-                { model: { $regex: search, $options: 'i' } }
+                { vin: { $regex: safeSearch, $options: 'i' } },
+                { stockNumber: { $regex: safeSearch, $options: 'i' } },
+                { make: { $regex: safeSearch, $options: 'i' } },
+                { model: { $regex: safeSearch, $options: 'i' } }
             ];
         }
 
@@ -53,7 +64,8 @@ router.get('/', async (req, res) => {
         }
 
         if (make) {
-            query.make = { $regex: make, $options: 'i' };
+            const safeMake = escapeRegex(make);
+            query.make = { $regex: safeMake, $options: 'i' };
         }
 
         const vehicles = await Vehicle.find(query)
@@ -62,7 +74,7 @@ router.get('/', async (req, res) => {
 
         res.json(vehicles);
     } catch (error) {
-        console.error('Error fetching vehicles:', error);
+        logger.error('Error fetching vehicles', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to fetch vehicles'
@@ -182,7 +194,7 @@ router.post('/populate', async (req, res) => {
             total
         });
     } catch (error) {
-        console.error('Error populating database from CSV:', error);
+        logger.error('Error populating database from CSV', { error: error.message, stack: error.stack });
         res.status(500).json({
             success: false,
             message: 'Error populating database',
@@ -199,7 +211,7 @@ router.get('/count', async (req, res) => {
         const total = await Vehicle.countDocuments();
         res.json({ total });
     } catch (error) {
-        console.error('Error counting vehicles:', error);
+        logger.error('Error counting vehicles', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -236,7 +248,7 @@ router.get('/search', async (req, res) => {
         const vehicles = await Vehicle.find(query).limit(100);
         res.json(vehicles);
     } catch (error) {
-        console.error('Error searching vehicles:', error);
+        logger.error('Error searching vehicles', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to search vehicles'

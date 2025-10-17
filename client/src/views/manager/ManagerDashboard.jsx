@@ -324,8 +324,25 @@ const ManagerDashboard = memo(function ManagerDashboard({ jobs, users, currentUs
 				await V2.put(`/jobs/${jobId}/start`, { userId: currentUser?.id });
 				message = 'Timer started successfully';
 			} else if (action === 'stop') {
-				await V2.put(`/jobs/${jobId}/stop`, { userId: currentUser?.id });
-				message = 'Timer stopped successfully';
+				const sessions = (detailJob?.technicianSessions || []).filter(
+					(session) => session && (!session.endTime)
+				);
+				if (!sessions.length && currentUser?.id) {
+					await V2.post(`/jobs/${jobId}/remove-technician`, {
+						technicianId: currentUser.id,
+						endTime: new Date().toISOString()
+					});
+				} else {
+					await Promise.all(
+						sessions.map((session) =>
+							V2.post(`/jobs/${jobId}/remove-technician`, {
+								technicianId: session.technicianId,
+								endTime: new Date().toISOString()
+							})
+						)
+					);
+				}
+				message = 'Active technician timers stopped';
 			} else if (action === 'complete') {
 				await V2.put(`/jobs/${jobId}/complete`, { userId: currentUser?.id, completedAt: new Date().toISOString() });
 				message = 'Job marked complete';
@@ -660,16 +677,16 @@ const ManagerDashboard = memo(function ManagerDashboard({ jobs, users, currentUs
 						</button>
 
 						<div className="pr-6">
-							<p className="text-[11px] uppercase tracking-[0.32em] x-text-subtle">Job Overview</p>
-							<h2 className="mt-2 text-xl font-semibold">
-								{selectedJob?.year} {selectedJob?.make} {selectedJob?.model}
-							</h2>
-							<div className="mt-2 flex flex-wrap gap-3 text-xs x-text-subtle">
-								<span>Stock <span className="text-[color:var(--x-text-primary)]">{selectedJob?.stockNumber || 'N/A'}</span></span>
-								<span>VIN <span className="font-mono text-[color:var(--x-text-primary)]">{selectedJob?.vin || 'N/A'}</span></span>
-								<span>Service <span className="text-[color:var(--x-blue)]">{selectedJob?.serviceType || 'N/A'}</span></span>
-								<span>Tech <span className="text-[color:var(--x-text-primary)]">{selectedJob?.technicianName || 'N/A'}</span></span>
-							</div>
+					<p className="text-[11px] uppercase tracking-[0.32em] x-text-subtle">Job Overview</p>
+					<h2 className="mt-2 text-xl font-semibold">
+						{selectedJob?.vehicleSummary || selectedJob?.vehicle?.summary || [selectedJob?.year, selectedJob?.make, selectedJob?.model].filter(Boolean).join(' ') || 'Vehicle'}
+					</h2>
+					<div className="mt-2 flex flex-wrap gap-3 text-xs x-text-subtle">
+						<span>Stock <span className="text-[color:var(--x-text-primary)]">{selectedJob?.vehicle?.stockNumber || selectedJob?.stockNumber || 'N/A'}</span></span>
+						<span>VIN <span className="font-mono text-[color:var(--x-text-primary)]">{selectedJob?.vehicle?.vin || selectedJob?.vin || 'N/A'}</span></span>
+						<span>Service <span className="text-[color:var(--x-blue)]">{selectedJob?.serviceType || 'N/A'}</span></span>
+						<span>Tech <span className="text-[color:var(--x-text-primary)]">{selectedJob?.technicianName || 'N/A'}</span></span>
+					</div>
 						</div>
 
 						{detailsLoading ? (
@@ -683,29 +700,39 @@ const ManagerDashboard = memo(function ManagerDashboard({ jobs, users, currentUs
 								<div className="mt-6 grid gap-4 md:grid-cols-2">
 									<div className="space-y-3">
 										<h3 className="text-xs font-semibold uppercase tracking-[0.28em] x-text-subtle">Vehicle</h3>
-										<dl className="space-y-2 text-sm x-text-subtle">
-											<div className="flex justify-between">
-												<dt>Stock</dt>
-												<dd className="text-[color:var(--x-text-primary)]">{detailJob?.stockNumber || 'N/A'}</dd>
-											</div>
-											<div className="flex justify-between">
-												<dt>VIN</dt>
-												<dd className="font-mono text-[color:var(--x-text-primary)] text-xs">{detailJob?.vin || 'N/A'}</dd>
-											</div>
+						<dl className="space-y-2 text-sm x-text-subtle">
+							<div className="flex justify-between">
+								<dt>Vehicle</dt>
+								<dd className="text-[color:var(--x-text-primary)] text-right">
+									{detailJob?.vehicleSummary || detailJob?.vehicle?.summary || detailJob?.vehicleDescription || 'N/A'}
+								</dd>
+							</div>
+							<div className="flex justify-between">
+								<dt>Stock</dt>
+								<dd className="text-[color:var(--x-text-primary)]">{detailJob?.vehicle?.stockNumber || detailJob?.stockNumber || 'N/A'}</dd>
+							</div>
+							<div className="flex justify-between">
+								<dt>VIN</dt>
+								<dd className="font-mono text-[color:var(--x-text-primary)] text-xs">{detailJob?.vehicle?.vin || detailJob?.vin || 'N/A'}</dd>
+							</div>
 											<div className="flex justify-between">
 												<dt>Service</dt>
 												<dd className="text-[color:var(--x-blue)]">{detailJob?.serviceType || 'N/A'}</dd>
 											</div>
-											<div className="flex justify-between">
-												<dt>Sales</dt>
-												<dd className="text-[color:var(--x-green)]">{detailJob?.salesPerson || '—'}</dd>
-											</div>
-											<div className="flex justify-between">
-												<dt>Priority</dt>
-												<dd className="text-[color:var(--x-text-primary)]">{detailJob?.priority || 'Normal'}</dd>
-											</div>
-										</dl>
-									</div>
+							<div className="flex justify-between">
+								<dt>Sales</dt>
+								<dd className="text-[color:var(--x-green)]">{detailJob?.salesPerson || '—'}</dd>
+							</div>
+							<div className="flex justify-between">
+								<dt>Color</dt>
+								<dd className="text-[color:var(--x-text-primary)]">{detailJob?.vehicle?.color || detailJob?.vehicleColor || '—'}</dd>
+							</div>
+							<div className="flex justify-between">
+								<dt>Priority</dt>
+								<dd className="text-[color:var(--x-text-primary)]">{detailJob?.priority || 'Normal'}</dd>
+							</div>
+						</dl>
+					</div>
 
 									<div className="space-y-3">
 										<h3 className="text-xs font-semibold uppercase tracking-[0.28em] x-text-subtle">Timing</h3>

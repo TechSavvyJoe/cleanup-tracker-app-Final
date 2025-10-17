@@ -35,7 +35,7 @@ describe('SettingsView', () => {
       onSettingsChange
     });
 
-    fireEvent.change(screen.getByLabelText(/Site Title/i), {
+    fireEvent.change(screen.getByLabelText(/Workspace title/i), {
       target: { value: 'New Title' }
     });
 
@@ -68,14 +68,14 @@ describe('SettingsView', () => {
       onSettingsChange
     });
 
-    fireEvent.change(screen.getByLabelText(/Site Title/i), {
+    fireEvent.change(screen.getByLabelText(/Workspace title/i), {
       target: { value: 'Cleanup Tracker' }
     });
-    fireEvent.change(screen.getByLabelText(/Google Sheets CSV URL/i), {
+    fireEvent.change(screen.getByLabelText(/Published CSV URL/i), {
       target: { value: ' https://example.com/csv ' }
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     await waitFor(() => {
       expect(V2.put).toHaveBeenCalledWith('/settings', {
@@ -107,10 +107,10 @@ describe('SettingsView', () => {
       onSettingsChange
     });
 
-    fireEvent.change(screen.getByLabelText(/Site Title/i), {
+    fireEvent.change(screen.getByLabelText(/Workspace title/i), {
       target: { value: 'Cleanup Tracker' }
     });
-    fireEvent.change(screen.getByLabelText(/Google Sheets CSV URL/i), {
+    fireEvent.change(screen.getByLabelText(/Published CSV URL/i), {
       target: { value: 'https://example.com/csv' }
     });
 
@@ -141,7 +141,7 @@ describe('SettingsView', () => {
       onSettingsChange: jest.fn()
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /sync csv & refresh inventory/i }));
+  fireEvent.click(screen.getByRole('button', { name: /sync & refresh inventory/i }));
 
     await waitFor(() => {
       expect(V2.post).toHaveBeenCalledWith('/vehicles/refresh');
@@ -159,7 +159,10 @@ describe('SettingsView', () => {
       onSettingsChange: jest.fn()
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /refresh inventory only/i }));
+    // The UI renders two similar buttons (compact and full-width). Prefer the
+    // exact text for the compact button.
+    const refreshButton = screen.getAllByRole('button', { name: /refresh only/i })[0];
+    fireEvent.click(refreshButton);
 
     await waitFor(() => {
       expect(V2.post).toHaveBeenCalledWith('/vehicles/refresh');
@@ -191,7 +194,7 @@ describe('SettingsView', () => {
       </ToastProvider>
     );
 
-    expect(screen.getByLabelText(/Site Title/i).value).toBe('Updated Title');
-    expect(screen.getByLabelText(/Google Sheets CSV URL/i).value).toBe('https://example.com/csv');
+  expect(screen.getByLabelText(/Workspace title/i).value).toBe('Updated Title');
+  expect(screen.getByLabelText(/Published CSV URL/i).value).toBe('https://example.com/csv');
   });
 });

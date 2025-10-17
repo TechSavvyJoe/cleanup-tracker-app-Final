@@ -1,8 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const passport = require('passport');
 const Cleanup = require('../models/Cleanup');
 const Vehicle = require('../models/Vehicle');
 const User = require('../models/User');
+const logger = require('../utils/logger');
+
+// Apply authentication middleware to all routes
+router.use(passport.authenticate('jwt', { session: false }));
 
 // @route   POST api/cleanups/start
 // @desc    Start a new cleanup
@@ -67,7 +72,7 @@ router.post('/start', async (req, res) => {
 
         res.status(201).json(populatedCleanup);
     } catch (error) {
-        console.error('Error starting cleanup:', error);
+        logger.error('Error starting cleanup', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to start cleanup'
@@ -121,7 +126,7 @@ router.post('/end/:id', async (req, res) => {
 
         res.json(populatedCleanup);
     } catch (error) {
-        console.error('Error ending cleanup:', error);
+        logger.error('Error ending cleanup', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to end cleanup'
@@ -168,7 +173,7 @@ router.get('/', async (req, res) => {
 
         res.json(cleanups);
     } catch (error) {
-        console.error('Error fetching cleanups:', error);
+        logger.error('Error fetching cleanups', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to fetch cleanups'
@@ -194,7 +199,7 @@ router.get('/:id', async (req, res) => {
 
         res.json(cleanup);
     } catch (error) {
-        console.error('Error fetching cleanup:', error);
+        logger.error('Error fetching cleanup', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to fetch cleanup'
@@ -213,7 +218,7 @@ router.get('/active/count', async (req, res) => {
 
         res.json({ count });
     } catch (error) {
-        console.error('Error counting active cleanups:', error);
+        logger.error('Error counting active cleanups', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to count active cleanups'
@@ -242,7 +247,7 @@ router.delete('/:id', async (req, res) => {
             message: 'Cleanup deleted successfully'
         });
     } catch (error) {
-        console.error('Error deleting cleanup:', error);
+        logger.error('Error deleting cleanup', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to delete cleanup'

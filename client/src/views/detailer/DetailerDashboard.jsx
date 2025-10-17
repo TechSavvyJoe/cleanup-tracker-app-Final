@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { V2 } from '../../utils/v2Client';
 import { GlassCard, ProgressRing } from '../../components/PremiumUI';
 import { Sparkline } from '../../components/DataVisualization';
 import LiveTimer from '../../components/LiveTimer';
 import DateUtils from '../../utils/dateUtils';
 
-function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWork, onOpenScanner, onGoToNewJob }) {
+function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWork, onRefresh, onOpenScanner, onGoToNewJob }) {
   const [showStats, setShowStats] = useState(true);
   const [showTimeline, setShowTimeline] = useState(false);
   const [filterDate, setFilterDate] = useState('');
@@ -69,16 +69,35 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
 
   const [details, setDetails] = useState(null);
   const [elapsed, setElapsed] = useState(0); // seconds
+  const activeJobId = userActiveJob?.id || userActiveJob?._id || null;
+
+  const triggerRefresh = useCallback(async () => {
+    if (typeof onRefresh === 'function') {
+      await Promise.resolve(onRefresh());
+      return;
+    }
+    if (activeJobId) {
+      try {
+        const res = await V2.get(`/jobs/${activeJobId}`);
+        setDetails(res.data);
+      } catch (refreshError) {
+        console.error('Failed to refresh job details', refreshError);
+      }
+    }
+  }, [onRefresh, activeJobId]);
 
   const completeJob = async (status) => {
+    if (!activeJobId) {
+      alert('No active job found');
+      return;
+    }
     try {
-      // Use the same completion logic but with different status
       if (status === 'qc_required') {
-        await V2.put(`/jobs/${userActiveJob.id}/status`, { status: 'QC Required' });
+        await V2.put(`/jobs/${activeJobId}/status`, { status: 'QC Required' });
       } else {
-        await V2.put(`/jobs/${userActiveJob.id}/status`, { status: 'Completed' });
+        await V2.put(`/jobs/${activeJobId}/status`, { status: 'Completed' });
       }
-      onStopWork(); // This will refresh the data
+      await triggerRefresh();
     } catch (error) {
       console.error('Failed to complete job:', error);
       alert('Failed to complete job: ' + (error.response?.data?.error || error.message));
@@ -92,7 +111,7 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
   // Job action handler
   const handleJobAction = async (action) => {
     try {
-      const jobId = userActiveJob?.id || userActiveJob?._id;
+      const jobId = activeJobId;
       if (!jobId) return alert('No active job found');
 
       switch (action) {
@@ -121,12 +140,128 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
         default:
           break;
       }
+      await triggerRefresh();
     } catch (err) {
       alert('Action failed: ' + (err.response?.data?.error || err.message));
     }
   };
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const activeVehicle = userActiveJob?.vehicle || {};
+  const vinSuffix = activeVehicle.vin ? activeVehicle.vin.slice(-6).toUpperCase() : '';
+  const sessionSource = useMemo(() => {
+    if (details?.job?.technicianSessions && details.job.technicianSessions.length > 0) {
+      return details.job.technicianSessions;
+    }
+    if (userActiveJob?.technicianSessions && userActiveJob.technicianSessions.length > 0) {
+      return userActiveJob.technicianSessions;
+    }
+    return [];
+  }, [details, userActiveJob]);
+
+  const myIdentifiers = useMemo(() => (
+    new Set([user.id, user.pin, user.employeeId].filter(Boolean).map(value => String(value)))
+  ), [user.id, user.pin, user.employeeId]);
+
+  const technicianSessions = useMemo(() => sessionSource.map(session => {
+    const normalizedId = session?.technicianId != null ? String(session.technicianId) : '';
+    const startTime = session?.startTime || null;
+    const endTime = session?.endTime || null;
+    const isActive = session?.isActive ?? !endTime;
+    const elapsedSeconds = session?.elapsedSeconds ?? (
+      startTime && DateUtils.isValidDate(startTime)
+        ? Math.max(0, Math.floor((Date.now() - new Date(startTime).getTime()) / 1000))
+        : 0
+    );
+    const durationMinutes = session?.durationMinutes ?? (
+      startTime
+        ? DateUtils.calculateDuration(startTime, endTime || new Date())
+        : 0
+    );
+    const isMe = normalizedId && myIdentifiers.has(normalizedId);
+
+    return {
+      ...session,
+      technicianId: normalizedId,
+      isActive,
+      elapsedSeconds,
+      durationMinutes,
+      isMe
+    };
+  }), [sessionSource, myIdentifiers]);
+
+  const sortedSessions = useMemo(() => {
+    const copy = [...technicianSessions];
+    copy.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      const aStart = a.startTime && DateUtils.isValidDate(a.startTime) ? new Date(a.startTime).getTime() : 0;
+      const bStart = b.startTime && DateUtils.isValidDate(b.startTime) ? new Date(b.startTime).getTime() : 0;
+      return bStart - aStart;
+    });
+    return copy;
+  }, [technicianSessions]);
+
+  const myActiveSession = useMemo(
+    () => sortedSessions.find(session => session.isMe && session.isActive) || null,
+    [sortedSessions]
+  );
+
+  const stopMyTimer = useCallback(async () => {
+    if (!activeJobId || !myActiveSession) {
+      alert('No active timer to stop.');
+      return;
+    }
+    try {
+      await V2.post(`/jobs/${activeJobId}/remove-technician`, {
+        technicianId: myActiveSession.technicianId,
+        endTime: new Date().toISOString()
+      });
+      await triggerRefresh();
+    } catch (err) {
+      console.error('Failed to stop timer:', err);
+      alert('Failed to stop timer: ' + (err.response?.data?.error || err.message));
+    }
+  }, [activeJobId, myActiveSession, triggerRefresh]);
+
+  const detailSessions = useMemo(() => {
+    if (!jobDetails?.job?.technicianSessions) {
+      return [];
+    }
+    const mapped = jobDetails.job.technicianSessions.map(session => {
+      const normalizedId = session?.technicianId != null ? String(session.technicianId) : '';
+      const startTime = session?.startTime || null;
+      const endTime = session?.endTime || null;
+      const isActive = session?.isActive ?? !endTime;
+      const elapsedSeconds = session?.elapsedSeconds ?? (
+        startTime && DateUtils.isValidDate(startTime)
+          ? Math.max(0, Math.floor((Date.now() - new Date(startTime).getTime()) / 1000))
+          : 0
+      );
+      const durationMinutes = session?.durationMinutes ?? (
+        startTime ? DateUtils.calculateDuration(startTime, endTime || new Date()) : 0
+      );
+      const isMe = normalizedId && myIdentifiers.has(normalizedId);
+      return {
+        ...session,
+        technicianId: normalizedId,
+        isActive,
+        elapsedSeconds,
+        durationMinutes,
+        isMe
+      };
+    });
+
+    mapped.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      const aStart = a.startTime && DateUtils.isValidDate(a.startTime) ? new Date(a.startTime).getTime() : 0;
+      const bStart = b.startTime && DateUtils.isValidDate(b.startTime) ? new Date(b.startTime).getTime() : 0;
+      return bStart - aStart;
+    });
+
+    return mapped;
+  }, [jobDetails, myIdentifiers]);
 
   // Open job details handler
   const openJobDetails = async (job) => {
@@ -192,18 +327,18 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
   useEffect(() => {
     let interval;
     const fetchAndStart = async () => {
-      if (!userActiveJob) {
+      if (!activeJobId) {
         setDetails(null);
         setElapsed(0);
         return;
       }
 
       try {
-        const res = await V2.get(`/jobs/${userActiveJob.id}`);
+        const res = await V2.get(`/jobs/${activeJobId}`);
         setDetails(res.data);
 
         // Get start time from multiple possible sources
-        const startTime = userActiveJob.startTime || userActiveJob.startedAt ||
+        const startTime = userActiveJob?.startTime || userActiveJob?.startedAt ||
                          res.data?.job?.startTime || res.data?.job?.startedAt ||
                          res.data?.job?.createdAt;
 
@@ -229,7 +364,7 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
       } catch (err) {
         console.error('Failed to fetch job details:', err);
         // Fallback timer using job start time
-        if (userActiveJob.startTime && DateUtils.isValidDate(userActiveJob.startTime)) {
+        if (userActiveJob?.startTime && DateUtils.isValidDate(userActiveJob.startTime)) {
           const startTs = new Date(userActiveJob.startTime).getTime();
           const update = () => setElapsed(Math.max(0, Math.floor((Date.now() - startTs) / 1000)));
           update();
@@ -239,7 +374,7 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
     };
     fetchAndStart();
     return () => { if (interval) clearInterval(interval); };
-  }, [userActiveJob]);
+  }, [activeJobId, userActiveJob]);
 
   // Add error handling for the dashboard after all hooks
   if (!user) {
@@ -270,15 +405,82 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
 
             <div className="grid md:grid-cols-3 gap-6 mb-8">
               <div className="md:col-span-2">
-                <h4 className="text-3xl font-bold text-white mb-3">{userActiveJob.vehicleDescription}</h4>
-                <div className="grid grid-cols-2 gap-4 mb-4">
+                <h4 className="text-3xl font-bold text-white mb-1">
+                  {userActiveJob.vehicleSummary || activeVehicle.summary || userActiveJob.vehicleDescription}
+                </h4>
+                <p className="text-gray-400 text-sm mb-4">
+                  {[activeVehicle.year, activeVehicle.make, activeVehicle.model].filter(Boolean).join(' ') || 'Vehicle details pending'}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                   <div className="bg-blue-500/10 rounded-xl p-3 border border-blue-500/30">
                     <p className="text-blue-400 font-medium text-xs mb-1">Service Type</p>
-                    <p className="text-white font-semibold text-sm">{userActiveJob.serviceType}</p>
+                    <p className="text-white font-semibold text-sm">{userActiveJob.serviceType || 'N/A'}</p>
                   </div>
                   <div className="bg-purple-500/10 rounded-xl p-3 border border-purple-500/30">
                     <p className="text-purple-400 font-medium text-xs mb-1">Stock Number</p>
-                    <p className="text-white font-semibold text-sm">{userActiveJob.stockNumber}</p>
+                    <p className="text-white font-semibold text-sm">{userActiveJob.stockNumber || activeVehicle.stockNumber || '—'}</p>
+                  </div>
+                  <div className="bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/30">
+                    <p className="text-emerald-400 font-medium text-xs mb-1">VIN</p>
+                    <p className="text-white font-semibold text-sm">{vinSuffix ? `…${vinSuffix}` : '—'}</p>
+                  </div>
+                  <div className="bg-amber-500/10 rounded-xl p-3 border border-amber-500/30">
+                    <p className="text-amber-400 font-medium text-xs mb-1">Priority</p>
+                    <p className="text-white font-semibold text-sm">{userActiveJob.priority || 'Normal'}</p>
+                  </div>
+                </div>
+                <div className="bg-black rounded-2xl p-4 border border-gray-800 mb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-gray-500 text-xs uppercase tracking-[0.28em]">Team On This Vehicle</p>
+                      <p className="text-white text-lg font-semibold">{sortedSessions.length || 1} technician{sortedSessions.length === 1 ? '' : 's'} engaged</p>
+                    </div>
+                    <button
+                      onClick={() => handleJobAction('addTechnician')}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gray-900 hover:bg-gray-800 border border-gray-700 text-xs font-semibold text-white transition-colors"
+                      type="button"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add Teammate
+                    </button>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {sortedSessions.length === 0 && (
+                      <div className="text-sm text-gray-500">You're currently the only technician on this job.</div>
+                    )}
+                    {sortedSessions.map((session, index) => (
+                      <div key={`${session.technicianId || 'tech'}-${session.startTime || session.endTime || index}`} className="flex flex-wrap items-center justify-between gap-3 bg-gray-900/60 rounded-xl border border-gray-700 px-4 py-3">
+                        <div>
+                          <p className="text-white font-semibold text-sm">
+                            {session.technicianName || 'Teammate'} {session.isMe ? <span className="text-amber-400 text-xs font-normal">(You)</span> : null}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {session.isActive ? 'Active now' : `Completed • ${DateUtils.formatDuration(session.durationMinutes)}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {session.isActive ? (
+                            <LiveTimer
+                              startTime={session.startTime}
+                              className="text-amber-400 font-mono text-sm"
+                            />
+                          ) : (
+                            <span className="text-gray-400 text-sm font-semibold">{DateUtils.formatDuration(session.durationMinutes)}</span>
+                          )}
+                          {session.isMe && session.isActive ? (
+                            <button
+                              type="button"
+                              onClick={stopMyTimer}
+                              className="px-3 py-1.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-semibold border border-amber-500/40"
+                            >
+                              Stop Timer
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
                 {details && (
@@ -689,21 +891,21 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-3">
-                        <h4 className="text-white font-bold text-xl">{job.vehicleDescription}</h4>
-                        {job.color && (
+                        <h4 className="text-white font-bold text-xl">{job.vehicleSummary || job.vehicle?.summary || job.vehicleDescription}</h4>
+                        {(job.vehicle?.color || job.color) && (
                           <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full font-semibold">
-                            {job.color}
+                            {job.vehicle?.color || job.color}
                           </span>
                         )}
                       </div>
                       <div className="grid grid-cols-2 gap-4 text-sm mb-3">
                         <div className="bg-black rounded-xl p-3">
                           <p className="text-gray-500 font-medium mb-1">Stock Number</p>
-                          <p className="text-white font-bold">{job.stockNumber}</p>
+                          <p className="text-white font-bold">{job.stockNumber || job.vehicle?.stockNumber || '—'}</p>
                         </div>
                         <div className="bg-black rounded-xl p-3">
                           <p className="text-gray-500 font-medium mb-1">VIN</p>
-                          <p className="font-mono text-white font-bold text-sm">{job.vin?.slice(-6) || 'N/A'}</p>
+                          <p className="font-mono text-white font-bold text-sm">{(job.vehicle?.vin || job.vin)?.slice(-6) || 'N/A'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-4 text-sm mb-3">
@@ -822,11 +1024,11 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
                         <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                         Vehicle
                       </h5>
-                      <p className="text-white font-semibold text-base mb-2">{selectedJob.vehicleDescription}</p>
+                      <p className="text-white font-semibold text-base mb-2">{selectedJob.vehicleSummary || selectedJob.vehicle?.summary || selectedJob.vehicleDescription}</p>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                        <div className="flex items-center gap-1"><span className="text-gray-500">VIN:</span><span className="font-mono text-white">{jobDetails.job?.vin}</span></div>
-                        <div className="flex items-center gap-1"><span className="text-gray-500">Stock:</span><span className="text-white">{jobDetails.job?.stockNumber}</span></div>
-                        {jobDetails.job?.color && <div className="flex items-center gap-1"><span className="text-gray-500">Color:</span><span className="text-white">{jobDetails.job.color}</span></div>}
+                        <div className="flex items-center gap-1"><span className="text-gray-500">VIN:</span><span className="font-mono text-white">{jobDetails.job?.vehicle?.vin || jobDetails.job?.vin || '—'}</span></div>
+                        <div className="flex items-center gap-1"><span className="text-gray-500">Stock:</span><span className="text-white">{jobDetails.job?.vehicle?.stockNumber || jobDetails.job?.stockNumber || '—'}</span></div>
+                        {(jobDetails.job?.vehicle?.color || jobDetails.job?.color) && <div className="flex items-center gap-1"><span className="text-gray-500">Color:</span><span className="text-white">{jobDetails.job?.vehicle?.color || jobDetails.job?.color}</span></div>}
                         <div className="flex items-center gap-1"><span className="text-gray-500">Service:</span><span className="text-blue-400">{jobDetails.job?.serviceType}</span></div>
                         <div className="flex items-center gap-1">
                           <span className="text-gray-600">Priority:</span>
@@ -888,8 +1090,38 @@ function DetailerDashboard({ user, jobs, completedJobs, userActiveJob, onStopWor
                         </div>
                       )}
                     </div>
-                  </div>
                 </div>
+              </div>
+
+                {detailSessions.length > 0 && (
+                  <div className="bg-black rounded-lg p-3 border border-gray-800">
+                    <h5 className="text-white font-semibold mb-2 text-sm flex items-center gap-1">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a4 4 0 00-4-4h-1M7 20H2v-2a4 4 0 014-4h1m0-4a4 4 0 118 0 4 4 0 01-8 0z" /></svg>
+                      Team Sessions
+                    </h5>
+                    <div className="space-y-2 max-h-40 overflow-auto pr-1">
+                      {detailSessions.map((session, index) => (
+                        <div key={`${session.technicianId || 'tech'}-${session.startTime || session.endTime || index}`} className="flex items-center justify-between gap-3 bg-gray-900/60 rounded-xl border border-gray-700 px-3 py-2">
+                          <div>
+                            <p className="text-white font-semibold text-sm">
+                              {session.technicianName || 'Teammate'} {session.isMe ? <span className="text-amber-400 text-xs font-normal">(You)</span> : null}
+                            </p>
+                            <p className="text-[11px] text-gray-500">
+                              {session.isActive ? 'Active now' : `Completed • ${DateUtils.formatDuration(session.durationMinutes)}`}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            {session.isActive ? (
+                              <LiveTimer startTime={session.startTime} className="text-amber-400 font-mono text-sm" />
+                            ) : (
+                              <span className="text-gray-400 text-sm font-semibold">{DateUtils.formatDuration(session.durationMinutes)}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Compact Activity Timeline */}
                 <div className="bg-black rounded-lg p-3 border border-gray-800">

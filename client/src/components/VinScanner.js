@@ -127,56 +127,151 @@ export default function VinScanner({ onScanSuccess }) {
     }, []);
 
     return (
-        <div className="w-full relative">
-            <div className="relative">
-                <video ref={videoRef} className="w-full rounded-md" muted playsInline />
-                
-                {/* Cross-Pattern Scanner Layout */}
+        <div className="w-full relative bg-black rounded-2xl overflow-hidden border border-x-border">
+            <div className="relative aspect-video">
+                <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
+
+                {/* Enterprise-grade Scanner Overlay with X-style */}
                 {active && (
-                    <div className="absolute inset-0 pointer-events-none">
-                        {/* Horizontal scanning area for wide barcodes */}
-                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-20 border-2 border-green-400 rounded-lg bg-green-400/10">
-                            <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">
-                                Wide Barcode Scanning
+                    <div className="absolute inset-0 pointer-events-none bg-black/30">
+                        {/* Dimming overlay for focus */}
+                        <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/60"></div>
+
+                        {/* PRIMARY: Horizontal VIN Barcode Scanner - Centered */}
+                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-28">
+                            {/* Glow effect */}
+                            <div className="absolute inset-0 bg-x-green/20 rounded-2xl blur-xl animate-pulse"></div>
+
+                            {/* Main scanning frame */}
+                            <div className="absolute inset-0 border-4 border-x-green rounded-2xl bg-x-green/5 animate-glow shadow-glow-green">
+                                {/* Label */}
+                                <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-x-green text-white px-6 py-2 rounded-xl text-base font-black uppercase tracking-wider shadow-glow-green animate-bounce-subtle">
+                                    <div className="flex items-center gap-2">
+                                        <svg className="w-5 h-5 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        VIN Barcode Zone
+                                    </div>
+                                </div>
+
+                                {/* Corner brackets - Enterprise style */}
+                                <div className="absolute -top-3 -left-3 w-12 h-12 border-t-[6px] border-l-[6px] border-x-green rounded-tl-xl"></div>
+                                <div className="absolute -top-3 -right-3 w-12 h-12 border-t-[6px] border-r-[6px] border-x-green rounded-tr-xl"></div>
+                                <div className="absolute -bottom-3 -left-3 w-12 h-12 border-b-[6px] border-l-[6px] border-x-green rounded-bl-xl"></div>
+                                <div className="absolute -bottom-3 -right-3 w-12 h-12 border-b-[6px] border-r-[6px] border-x-green rounded-br-xl"></div>
+
+                                {/* Center alignment guides */}
+                                <div className="absolute top-1/2 left-0 w-8 h-0.5 bg-x-green -translate-y-1/2"></div>
+                                <div className="absolute top-1/2 right-0 w-8 h-0.5 bg-x-green -translate-y-1/2"></div>
+                                <div className="absolute top-0 left-1/2 w-0.5 h-8 bg-x-green -translate-x-1/2"></div>
+                                <div className="absolute bottom-0 left-1/2 w-0.5 h-8 bg-x-green -translate-x-1/2"></div>
+
+                                {/* Animated scanning line */}
+                                <div className="absolute top-1/2 left-0 w-full h-1 bg-gradient-to-r from-transparent via-x-green to-transparent -translate-y-1/2 animate-pulse shadow-glow-green"></div>
                             </div>
-                            
-                            {/* Enhanced corner indicators for barcode area */}
-                            <div className="absolute -top-2 -left-2 w-6 h-6 border-t-4 border-l-4 border-green-400"></div>
-                            <div className="absolute -top-2 -right-2 w-6 h-6 border-t-4 border-r-4 border-green-400"></div>
-                            <div className="absolute -bottom-2 -left-2 w-6 h-6 border-b-4 border-l-4 border-green-400"></div>
-                            <div className="absolute -bottom-2 -right-2 w-6 h-6 border-b-4 border-r-4 border-green-400"></div>
                         </div>
 
-                        {/* Vertical/Square scanning area for QR codes - centered overlapping */}
-                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-24 h-24 border-2 border-blue-400 rounded-lg bg-blue-400/10">
-                            <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-2 py-1 rounded-full text-xs font-bold">
-                                QR Code
+                        {/* SECONDARY: QR Code Scanner - Top Right */}
+                        <div className="absolute top-8 right-8 w-32 h-32">
+                            {/* Glow effect */}
+                            <div className="absolute inset-0 bg-x-blue/20 rounded-2xl blur-xl animate-pulse" style={{animationDelay: '0.5s'}}></div>
+
+                            {/* Main scanning frame */}
+                            <div className="absolute inset-0 border-3 border-x-blue rounded-2xl bg-x-blue/5 shadow-glow-blue">
+                                {/* Label */}
+                                <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-x-blue text-white px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wide shadow-glow-blue whitespace-nowrap">
+                                    QR Code
+                                </div>
+
+                                {/* Corner brackets */}
+                                <div className="absolute -top-2 -left-2 w-8 h-8 border-t-[4px] border-l-[4px] border-x-blue rounded-tl-lg"></div>
+                                <div className="absolute -top-2 -right-2 w-8 h-8 border-t-[4px] border-r-[4px] border-x-blue rounded-tr-lg"></div>
+                                <div className="absolute -bottom-2 -left-2 w-8 h-8 border-b-[4px] border-l-[4px] border-x-blue rounded-bl-lg"></div>
+                                <div className="absolute -bottom-2 -right-2 w-8 h-8 border-b-[4px] border-r-[4px] border-x-blue rounded-br-lg"></div>
+
+                                {/* Center crosshair */}
+                                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-4 h-4">
+                                    <div className="absolute top-1/2 left-0 w-full h-0.5 bg-x-blue -translate-y-1/2"></div>
+                                    <div className="absolute top-0 left-1/2 w-0.5 h-full bg-x-blue -translate-x-1/2"></div>
+                                </div>
                             </div>
-                            
-                            {/* QR code corner indicators */}
-                            <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-blue-400"></div>
-                            <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-blue-400"></div>
-                            <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-blue-400"></div>
-                            <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-blue-400"></div>
                         </div>
 
-                        {/* Scanning line animation */}
-                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-0.5 bg-red-500 animate-pulse"></div>
-                        
-                        {/* Instructions */}
-                        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-black/90 text-white px-6 py-3 rounded-lg text-center max-w-md">
-                            <div className="text-lg font-bold text-green-400">VIN Scanner Ready</div>
-                            <div className="text-sm mt-1">📏 Wide barcode: Use green horizontal area</div>
-                            <div className="text-sm">📱 QR code: Use blue square area</div>
-                            <div className="text-xs text-gray-300 mt-2">Hold steady • Auto-detects all formats</div>
+                        {/* Status and Instructions Bar - Bottom */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/95 to-transparent p-8">
+                            <div className="max-w-3xl mx-auto">
+                                {/* Status Indicator */}
+                                <div className="flex items-center justify-center gap-3 mb-4">
+                                    <div className="w-3 h-3 bg-x-green rounded-full animate-pulse shadow-glow-green"></div>
+                                    <span className="text-x-green text-xl font-bold uppercase tracking-wider">Scanner Active</span>
+                                    <div className="w-3 h-3 bg-x-green rounded-full animate-pulse shadow-glow-green"></div>
+                                </div>
+
+                                {/* Instructions Grid */}
+                                <div className="grid grid-cols-2 gap-6">
+                                    {/* VIN Barcode Instructions */}
+                                    <div className="bg-x-bg-secondary/80 backdrop-blur-sm rounded-xl p-4 border border-x-green/30">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className="w-8 h-8 bg-x-green rounded-lg flex items-center justify-center">
+                                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7" />
+                                                </svg>
+                                            </div>
+                                            <span className="text-x-green font-bold">VIN Barcode</span>
+                                        </div>
+                                        <p className="text-x-text text-sm">Align barcode horizontally in green frame</p>
+                                        <p className="text-x-text-secondary text-xs mt-1">Hold steady until scan completes</p>
+                                    </div>
+
+                                    {/* QR Code Instructions */}
+                                    <div className="bg-x-bg-secondary/80 backdrop-blur-sm rounded-xl p-4 border border-x-blue/30">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className="w-8 h-8 bg-x-blue rounded-lg flex items-center justify-center">
+                                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                                                </svg>
+                                            </div>
+                                            <span className="text-x-blue font-bold">QR Code</span>
+                                        </div>
+                                        <p className="text-x-text text-sm">Center QR code in blue square</p>
+                                        <p className="text-x-text-secondary text-xs mt-1">Auto-detects when in focus</p>
+                                    </div>
+                                </div>
+
+                                {/* Tech Info */}
+                                <div className="mt-4 text-center">
+                                    <p className="text-x-text-secondary text-xs">
+                                        <span className="inline-flex items-center gap-1">
+                                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                                            </svg>
+                                            Multi-format detection • Real-time processing • High accuracy
+                                        </span>
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}
             </div>
-            
+
             <canvas ref={canvasRef} className="hidden" />
-            {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
-            {!active && !error && <p className="text-gray-500 text-sm">Initializing camera…</p>}
+            {error && (
+                <div className="p-6 bg-x-red/10 border-t border-x-red/30">
+                    <div className="flex items-center gap-3 text-x-red">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="font-semibold">{error}</span>
+                    </div>
+                </div>
+            )}
+            {!active && !error && (
+                <div className="p-8 bg-x-bg-secondary flex items-center justify-center gap-3">
+                    <div className="w-6 h-6 border-3 border-x-blue border-t-transparent rounded-full animate-spin"></div>
+                    <span className="text-x-text-secondary">Initializing camera system...</span>
+                </div>
+            )}
         </div>
     );
 }

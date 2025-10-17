@@ -7,6 +7,7 @@ const Vehicle = require('../models/Vehicle');
 const axios = require('axios');
 const csv = require('csv-parser');
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 const settingsStore = require('../utils/settingsStore');
 const {
   getInventoryCsvUrl,
@@ -40,21 +41,57 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Safe parseInt that validates input and prevents injection
+function parsePositiveInt(value, defaultValue, max = null) {
+  if (value == null || value === '') return defaultValue;
+
+  // Convert to string and strip non-numeric characters (except leading minus)
+  const cleaned = String(value).replace(/[^0-9-]/g, '');
+  const parsed = parseInt(cleaned, 10);
+
+  // Validate result
+  if (Number.isNaN(parsed) || parsed < 1) {
+    return defaultValue;
+  }
+
+  // Apply max limit if specified
+  return max ? Math.min(parsed, max) : parsed;
+}
+
+// Middleware to validate MongoDB ObjectId
+function validateObjectId(paramName = 'id') {
+  return (req, res, next) => {
+    const id = req.params[paramName];
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    next();
+  };
+}
+
 function sanitizeUser(userDoc) {
-  if (!userDoc) return null;
+  if (!userDoc) { return null; }
   const user = userDoc.toObject({ virtuals: true });
-  delete user.pinHash;
-  delete user.passwordHash;
-  delete user._plainPin;
-  delete user._plainPassword;
-  user.id = String(user._id);
-  delete user._id;
-  delete user.__v;
-  return user;
+
+  // Use destructuring to exclude sensitive fields (better performance than delete)
+  const {
+    pinHash,
+    passwordHash,
+    _plainPin,
+    _plainPassword,
+    _id,
+    __v,
+    ...sanitized
+  } = user;
+
+  // Add computed fields
+  sanitized.id = String(_id);
+
+  return sanitized;
 }
 
 async function findUserByCredential(identifier) {
-  if (!identifier) return null;
+  if (!identifier) { return null; }
   const normalizedEmployee = String(identifier).toUpperCase();
   const normalizedUsername = String(identifier).toLowerCase();
   return V2User.findOne({
@@ -67,21 +104,54 @@ async function findUserByCredential(identifier) {
 }
 
 async function findUserByPin(pin) {
-  if (!pin) return null;
+  if (!pin) { return null; }
   const candidates = await V2User.find({
     pinHash: { $exists: true, $ne: null },
-    isActive: { $ne: false }
-  });
+    isActive: { $ne: false },
+    // Exclude locked accounts
+    $or: [
+      { lockUntil: { $exists: false } },
+      { lockUntil: { $lt: new Date() } }
+    ]
+  }).limit(100); // Limit exposure to prevent excessive bcrypt operations
+
   for (const candidate of candidates) {
-    if (await candidate.verifyPin(pin)) {
+    // Check if account is locked
+    if (candidate.lockUntil && candidate.lockUntil > new Date()) {
+      continue;
+    }
+
+    const isValidPin = await candidate.verifyPin(pin);
+
+    if (isValidPin) {
+      // Reset failed attempts on successful login
+      if (candidate.loginAttempts > 0 || candidate.lockUntil) {
+        candidate.loginAttempts = 0;
+        candidate.lockUntil = undefined;
+        await candidate.save();
+      }
       return candidate;
+    } else {
+      // Increment failed attempts
+      candidate.loginAttempts = (candidate.loginAttempts || 0) + 1;
+
+      // Lock account after 5 failed attempts
+      if (candidate.loginAttempts >= 5) {
+        candidate.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+        logger.warn('Account locked due to failed login attempts', {
+          userId: candidate._id,
+          employeeNumber: candidate.employeeNumber
+        });
+      }
+
+      await candidate.save();
     }
   }
   return null;
 }
 
 async function isPinInUse(pin, excludeId) {
-  if (!pin) return false;
+  if (!pin) { return false; }
   const query = {
     pinHash: { $exists: true, $ne: null }
   };
@@ -125,23 +195,276 @@ function authenticateToken(req, res, next) {
 }
 
 function jobToResponse(jobDoc) {
-  if (!jobDoc) return null;
+  if (!jobDoc) { return null; }
+  const now = new Date();
   const job = jobDoc.toObject({ virtuals: true });
   job.id = String(job._id);
   delete job._id;
   delete job.__v;
+
+  job.vehicleSummary = buildVehicleSummary(job);
+  job.vehicle = {
+    year: job.year || '',
+    make: job.make || '',
+    model: job.model || '',
+    color: job.vehicleColor || job.color || '',
+    stockNumber: job.stockNumber || '',
+    vin: job.vin || '',
+    description: job.vehicleDescription || '',
+    summary: job.vehicleSummary
+  };
+
+  const sessions = Array.isArray(job.technicianSessions) ? job.technicianSessions : [];
+  job.technicianSessions = sessions
+    .map(session => enrichTechnicianSession(session, now))
+    .sort((a, b) => {
+      const aStart = safeDate(a.startTime)?.getTime() || 0;
+      const bStart = safeDate(b.startTime)?.getTime() || 0;
+      return aStart - bStart;
+    });
+
+  job.activeTechnicians = job.technicianSessions
+    .filter(session => session.isActive)
+    .map(session => ({
+      technicianId: session.technicianId,
+      technicianName: session.technicianName,
+      startTime: session.startTime,
+      elapsedSeconds: session.elapsedSeconds
+    }));
+
+  if (!Array.isArray(job.assignedTechnicianIds)) {
+    job.assignedTechnicianIds = [];
+  } else {
+    job.assignedTechnicianIds = job.assignedTechnicianIds.map(String);
+  }
+
   return job;
+}
+
+function safeDate(value) {
+  if (!value) { return null; }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildVehicleSummary(job) {
+  const year = (job.year || '').toString().trim();
+  const make = (job.make || '').toString().trim();
+  const model = (job.model || '').toString().trim();
+  const description = (job.vehicleDescription || '').trim();
+  const color = (job.vehicleColor || job.color || '').toString().trim();
+
+  const headlineParts = [year, make, model].filter(Boolean);
+  const headline = headlineParts.join(' ');
+
+  if (headline) {
+    return color ? `${headline} • ${color}` : headline;
+  }
+
+  if (description) {
+    return color ? `${description} • ${color}` : description;
+  }
+
+  if (job.stockNumber) {
+    return `Stock ${job.stockNumber}`;
+  }
+
+  return 'Vehicle';
+}
+
+function enrichTechnicianSession(session = {}, now = new Date()) {
+  const start = safeDate(session.startTime);
+  const end = safeDate(session.endTime);
+  const effectiveEnd = end || now;
+  const durationMinutes = Number.isFinite(session.durationMinutes)
+    ? session.durationMinutes
+    : (start ? Math.max(0, Math.round((effectiveEnd.getTime() - start.getTime()) / (1000 * 60))) : 0);
+  const elapsedSeconds = start
+    ? Math.max(0, Math.floor((effectiveEnd.getTime() - start.getTime()) / 1000))
+    : 0;
+
+  return {
+    technicianId: session.technicianId || '',
+    technicianName: session.technicianName || '',
+    startTime: start ? start.toISOString() : null,
+    endTime: end ? end.toISOString() : null,
+    durationMinutes,
+    elapsedSeconds,
+    isActive: !end
+  };
+}
+
+function ensureTechnicianCollections(job) {
+  if (!Array.isArray(job.technicianSessions)) {
+    job.technicianSessions = [];
+  }
+  if (!Array.isArray(job.activeTechnicians)) {
+    job.activeTechnicians = [];
+  }
+  if (!Array.isArray(job.assignedTechnicianIds)) {
+    job.assignedTechnicianIds = [];
+  }
+}
+
+function syncActiveTechnicians(job) {
+  ensureTechnicianCollections(job);
+  job.activeTechnicians = job.technicianSessions
+    .filter(session => !session.endTime)
+    .map(session => ({
+      technicianId: session.technicianId,
+      technicianName: session.technicianName,
+      startTime: session.startTime
+    }));
+  return job.activeTechnicians;
+}
+
+function startTechnicianSession(job, technicianId, technicianName, startTime = new Date()) {
+  if (!technicianId) { return; }
+  ensureTechnicianCollections(job);
+  const normalizedId = String(technicianId);
+  const existingSession = job.technicianSessions.find(session => session.technicianId === normalizedId && !session.endTime);
+  if (existingSession) {
+    if (!existingSession.startTime) {
+      existingSession.startTime = startTime;
+    }
+    if (technicianName && technicianName !== existingSession.technicianName) {
+      existingSession.technicianName = technicianName;
+    }
+  } else {
+    job.technicianSessions.push({
+      technicianId: normalizedId,
+      technicianName: technicianName || '',
+      startTime
+    });
+  }
+  if (!job.assignedTechnicianIds.includes(normalizedId)) {
+    job.assignedTechnicianIds.push(normalizedId);
+  }
+  syncActiveTechnicians(job);
+}
+
+function stopTechnicianSession(job, technicianId, endTime = new Date()) {
+  if (!technicianId) { return false; }
+  ensureTechnicianCollections(job);
+  const normalizedId = String(technicianId);
+  const session = job.technicianSessions.find(entry => entry.technicianId === normalizedId && !entry.endTime);
+  if (!session) {
+    return false;
+  }
+  session.endTime = endTime;
+  const start = safeDate(session.startTime);
+  if (start) {
+    session.durationMinutes = Math.max(0, Math.round((endTime.getTime() - start.getTime()) / (1000 * 60)));
+  }
+  syncActiveTechnicians(job);
+  return true;
+}
+
+function finalizeOpenTechnicianSessions(job, endTime = new Date()) {
+  ensureTechnicianCollections(job);
+  job.technicianSessions.forEach(session => {
+    if (!session.endTime) {
+      session.endTime = endTime;
+      const start = safeDate(session.startTime);
+      if (start) {
+        session.durationMinutes = Math.max(0, Math.round((endTime.getTime() - start.getTime()) / (1000 * 60)));
+      }
+    }
+  });
+  syncActiveTechnicians(job);
+}
+
+const STATUS_SORT_ORDER = {
+  'in progress': 0,
+  'qc required': 1,
+  'paused': 2,
+  'pending': 3,
+  'qc approved': 4,
+  'completed': 5,
+  'cancelled': 6
+};
+
+function getStatusRank(status) {
+  if (!status) { return STATUS_SORT_ORDER.pending || 3; }
+  const normalized = status.toString().toLowerCase();
+  return STATUS_SORT_ORDER.hasOwnProperty(normalized) ? STATUS_SORT_ORDER[normalized] : 99;
+}
+
+function getComparableTimestamp(jobDoc) {
+  const start = safeDate(jobDoc.startTime);
+  const resumed = safeDate(jobDoc.resumedAt);
+  const created = safeDate(jobDoc.createdAt || jobDoc.date);
+  const updated = safeDate(jobDoc.updatedAt);
+
+  return (start && start.getTime()) ||
+    (resumed && resumed.getTime()) ||
+    (updated && updated.getTime()) ||
+    (created && created.getTime()) ||
+    0;
+}
+
+function sortJobsForDashboard(jobDocs = []) {
+  return [...jobDocs].sort((a, b) => {
+    const statusRankDiff = getStatusRank(a.status) - getStatusRank(b.status);
+    if (statusRankDiff !== 0) {
+      return statusRankDiff;
+    }
+    const timeDiff = getComparableTimestamp(b) - getComparableTimestamp(a);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    const aPriority = (a.priority || '').toString().toLowerCase();
+    const bPriority = (b.priority || '').toString().toLowerCase();
+    const priorityOrder = ['urgent', 'high', 'normal', 'low'];
+    const aPriorityRank = priorityOrder.indexOf(aPriority);
+    const bPriorityRank = priorityOrder.indexOf(bPriority);
+    return (aPriorityRank === -1 ? 99 : aPriorityRank) - (bPriorityRank === -1 ? 99 : bPriorityRank);
+  });
 }
 
 function computeJobDuration(job, endTime = new Date()) {
   if (!job.startTime) {
     return job.duration || 0;
   }
-  const end = endTime || new Date();
-  let duration = Math.round((end.getTime() - job.startTime.getTime()) / (1000 * 60));
-  if (job.pauseDuration) {
-    duration -= job.pauseDuration;
+
+  // Validate startTime is a valid date
+  const start = safeDate(job.startTime);
+  if (!start) {
+    logger.warn('Invalid startTime in computeJobDuration', {
+      jobId: job._id,
+      startTime: job.startTime
+    });
+    return job.duration || 0;
   }
+
+  const end = endTime || new Date();
+  let duration = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
+
+  // Check for NaN or negative duration
+  if (Number.isNaN(duration) || duration < 0) {
+    logger.warn('Invalid duration calculated', {
+      jobId: job._id,
+      startTime: job.startTime,
+      endTime: end,
+      calculatedDuration: duration
+    });
+    return job.duration || 0;
+  }
+
+  // Subtract pause duration if present and valid
+  if (job.pauseDuration && typeof job.pauseDuration === 'number' && job.pauseDuration > 0) {
+    duration -= job.pauseDuration;
+
+    // Warn if pause duration exceeds total duration (data integrity issue)
+    if (job.pauseDuration > duration + job.pauseDuration) {
+      logger.warn('Pause duration exceeds total duration', {
+        jobId: job._id,
+        totalDuration: duration + job.pauseDuration,
+        pauseDuration: job.pauseDuration
+      });
+    }
+  }
+
   return Math.max(0, duration);
 }
 
@@ -186,7 +509,7 @@ router.post('/jobs/populate-vehicle-details', async (req, res) => {
           job.make = vehicle.make || '';
           job.model = vehicle.model || '';
           job.vehicleColor = vehicle.color || '';
-          if (!job.salesPerson) job.salesPerson = '';
+          if (!job.salesPerson) { job.salesPerson = ''; }
           if (!job.priority) job.priority = 'Normal';
           await job.save();
           updated++;
@@ -212,8 +535,8 @@ router.get('/reports', async (req, res) => {
     let dateFilter = {};
     if (startDate || endDate) {
       dateFilter.date = {};
-      if (startDate) dateFilter.date.$gte = startDate;
-      if (endDate) dateFilter.date.$lte = endDate;
+  if (startDate) { dateFilter.date.$gte = startDate; }
+  if (endDate) { dateFilter.date.$lte = endDate; }
     }
     
     // Get all jobs for the period
@@ -235,8 +558,28 @@ router.get('/reports', async (req, res) => {
     // Calculate detailer performance
     const detailerStats = {};
     const serviceTypeStats = {};
+    const MAX_HISTORY = 50;
+    const MAX_RECENT = 10;
     
     completedJobs.forEach(job => {
+      const completionDate = safeDate(job.completedAt) || safeDate(job.endTime) || safeDate(job.updatedAt) || safeDate(job.startTime);
+      const durationMinutes = Number.isFinite(job.duration) && job.duration > 0
+        ? job.duration
+        : computeJobDuration(job, completionDate || new Date());
+      const summary = {
+        id: String(job._id),
+        vehicleSummary: buildVehicleSummary(job),
+        serviceType: job.serviceType || 'Unknown',
+        completedAt: completionDate ? completionDate.toISOString() : null,
+        durationMinutes,
+        technicianName: job.technicianName || '',
+        salesPerson: job.salesPerson || '',
+        priority: job.priority || 'Normal',
+        stockNumber: job.stockNumber || '',
+        vin: job.vin || '',
+        status: job.status
+      };
+
       // Detailer performance
       const techName = job.technicianName || 'Unknown';
       if (!detailerStats[techName]) {
@@ -246,38 +589,54 @@ router.get('/reports', async (req, res) => {
           totalTime: 0,
           minTime: Infinity,
           maxTime: 0,
-          recentJobs: 0
+          jobs: [],
+          recentJobs: []
         };
       }
-      
-      detailerStats[techName].totalJobs++;
-      detailerStats[techName].totalTime += job.duration || 0;
-      detailerStats[techName].minTime = Math.min(detailerStats[techName].minTime, job.duration || 0);
-      detailerStats[techName].maxTime = Math.max(detailerStats[techName].maxTime, job.duration || 0);
-      
-      // Count recent jobs (last 7 days)
-      const jobDate = new Date(job.createdAt || job.startTime);
-      if (jobDate >= sevenDaysAgo) {
-        detailerStats[techName].recentJobs++;
+      const techStat = detailerStats[techName];
+      techStat.totalJobs += 1;
+      techStat.totalTime += durationMinutes;
+      techStat.minTime = Math.min(techStat.minTime, durationMinutes);
+      techStat.maxTime = Math.max(techStat.maxTime, durationMinutes);
+      techStat.jobs.push(summary);
+      if (techStat.jobs.length > MAX_HISTORY) {
+        techStat.jobs = techStat.jobs.slice(-MAX_HISTORY);
+      }
+      if (completionDate && completionDate >= sevenDaysAgo) {
+        techStat.recentJobs.push(summary);
+        if (techStat.recentJobs.length > MAX_RECENT) {
+          techStat.recentJobs = techStat.recentJobs.slice(-MAX_RECENT);
+        }
       }
       
       // Service type performance
-      const serviceType = job.serviceType || 'Unknown';
+      const serviceType = summary.serviceType;
       if (!serviceTypeStats[serviceType]) {
         serviceTypeStats[serviceType] = {
-          jobs: 0,
+          name: serviceType,
+          jobCount: 0,
           totalTime: 0,
-          avgTime: 0,
           minTime: Infinity,
-          maxTime: 0
+          maxTime: 0,
+          jobs: []
         };
       }
-      
-      serviceTypeStats[serviceType].jobs++;
-      serviceTypeStats[serviceType].totalTime += job.duration || 0;
-      serviceTypeStats[serviceType].minTime = Math.min(serviceTypeStats[serviceType].minTime, job.duration || 0);
-      serviceTypeStats[serviceType].maxTime = Math.max(serviceTypeStats[serviceType].maxTime, job.duration || 0);
+      const serviceStat = serviceTypeStats[serviceType];
+      serviceStat.jobCount += 1;
+      serviceStat.totalTime += durationMinutes;
+      serviceStat.minTime = Math.min(serviceStat.minTime, durationMinutes);
+      serviceStat.maxTime = Math.max(serviceStat.maxTime, durationMinutes);
+      serviceStat.jobs.push(summary);
+      if (serviceStat.jobs.length > MAX_HISTORY) {
+        serviceStat.jobs = serviceStat.jobs.slice(-MAX_HISTORY);
+      }
     });
+    
+    const sortByCompletedDesc = (a, b) => {
+      const aDate = safeDate(a.completedAt)?.getTime() || 0;
+      const bDate = safeDate(b.completedAt)?.getTime() || 0;
+      return bDate - aDate;
+    };
     
     // Format detailer performance with proper averages
     const detailerPerformance = Object.values(detailerStats).map(stat => ({
@@ -285,17 +644,19 @@ router.get('/reports', async (req, res) => {
       totalJobs: stat.totalJobs,
       avgTime: stat.totalJobs > 0 ? Math.round(stat.totalTime / stat.totalJobs) : 0,
       minTime: stat.minTime === Infinity ? 0 : stat.minTime,
-      maxTime: stat.maxTime,
-      recentJobs: stat.recentJobs
+      maxTime: stat.maxTime === Infinity ? 0 : stat.maxTime,
+      recentJobs: stat.recentJobs.slice().sort(sortByCompletedDesc),
+      jobs: stat.jobs.slice().sort(sortByCompletedDesc)
     }));
     
     // Format service type performance
     const serviceTypes = Object.entries(serviceTypeStats).map(([type, stat]) => ({
       name: type,
-      jobs: stat.jobs,
-      avgTime: stat.jobs > 0 ? Math.round(stat.totalTime / stat.jobs) : 0,
+      jobCount: stat.jobCount,
+      avgTime: stat.jobCount > 0 ? Math.round(stat.totalTime / stat.jobCount) : 0,
       minTime: stat.minTime === Infinity ? 0 : stat.minTime,
-      maxTime: stat.maxTime
+      maxTime: stat.maxTime === Infinity ? 0 : stat.maxTime,
+      jobs: stat.jobs.slice().sort(sortByCompletedDesc)
     }));
     
     // Calculate daily trends (last 30 days)
@@ -338,7 +699,7 @@ router.get('/reports', async (req, res) => {
       dailyTrends
     });
   } catch (error) {
-    console.error('Reports error:', error);
+    logger.error('Reports error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -405,7 +766,7 @@ router.post('/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -461,15 +822,15 @@ router.post('/seed-users', async (req, res) => {
         ...rest,
         username: username ? username.toLowerCase() : undefined
       });
-      if (seedPin) user.pin = seedPin;
-      if (password) user.password = password;
+  if (seedPin) { user.pin = seedPin; }
+  if (password) { user.password = password; }
       await user.save();
     }
 
     const newCount = await V2User.countDocuments();
     res.json({ seeded: true, count: newCount });
   } catch (error) {
-    console.error('Seed users error:', error);
+    logger.error('Seed users error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -478,10 +839,17 @@ router.use(authenticateToken);
 
 // Diagnostic endpoints (secured)
 router.get('/diag', async (req, res) => {
-  const users = await V2User.find();
+  const [users, vehicleCount, jobCount] = await Promise.all([
+    V2User.find(),
+    Vehicle.countDocuments(),
+    Job.countDocuments()
+  ]);
+
   res.json({
     message: 'V2 API active',
-    users: users.map(sanitizeUser)
+    users: users.map(sanitizeUser),
+    vehicles: vehicleCount,
+    jobs: jobCount
   });
 });
 
@@ -521,14 +889,22 @@ router.post('/users', async (req, res) => {
     return res.status(400).json({ error: 'name and pin are required' });
   }
 
+  if (!/^[0-9]{4}$/.test(String(pin))) {
+    return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+  }
+
   if (await isPinInUse(pin)) {
     return res.status(409).json({ error: 'PIN already in use' });
   }
 
+  const normalizedEmployeeNumber = employeeNumber
+    ? String(employeeNumber).toUpperCase()
+    : String(pin).trim();
+
   const user = new V2User({
     name: name.trim(),
     role,
-    employeeNumber: employeeNumber ? String(employeeNumber).toUpperCase() : undefined,
+    employeeNumber: normalizedEmployeeNumber,
     phoneNumber,
     department,
     uid: uid || (role === 'detailer' ? `detailer-${Date.now()}` : undefined)
@@ -540,7 +916,7 @@ router.post('/users', async (req, res) => {
   res.status(201).json(sanitizeUser(user));
 });
 
-router.put('/users/:id', async (req, res) => {
+router.put('/users/:id', validateObjectId('id'), async (req, res) => {
   const { name, pin, employeeNumber, phoneNumber, department, role, isActive } = req.body || {};
   const { id } = req.params;
 
@@ -550,34 +926,85 @@ router.put('/users/:id', async (req, res) => {
   }
 
   if (pin) {
+    if (!/^[0-9]{4}$/.test(String(pin))) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+    }
     if (await isPinInUse(pin, id)) {
       return res.status(409).json({ error: 'PIN already in use' });
     }
     user.pin = pin;
+    if (!employeeNumber) {
+      user.employeeNumber = String(pin).trim();
+    }
   }
 
-  if (name !== undefined) user.name = name;
+  if (name !== undefined) { user.name = name; }
   if (employeeNumber !== undefined) {
     user.employeeNumber = employeeNumber ? String(employeeNumber).toUpperCase() : undefined;
   }
-  if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
-  if (department !== undefined) user.department = department;
-  if (role !== undefined) user.role = role;
-  if (typeof isActive === 'boolean') user.isActive = isActive;
+  if (phoneNumber !== undefined) { user.phoneNumber = phoneNumber; }
+  if (department !== undefined) { user.department = department; }
+  if (role !== undefined) { user.role = role; }
+  if (typeof isActive === 'boolean') { user.isActive = isActive; }
 
   await user.save();
   res.json(sanitizeUser(user));
 });
 
-router.delete('/users/:id', async (req, res) => {
-  await V2User.findByIdAndDelete(req.params.id);
-  res.status(204).end();
+router.delete('/users/:id', validateObjectId('id'), async (req, res) => {
+  try {
+    const user = await V2User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check for active jobs assigned to this user
+    const activeJobs = await Job.countDocuments({
+      $or: [
+        { technicianId: req.params.id },
+        { activeTechnicians: req.params.id }
+      ],
+      status: { $in: ['In Progress', 'Paused', 'QC Required'] }
+    });
+
+    if (activeJobs > 0) {
+      return res.status(400).json({
+        error: 'Cannot delete user with active jobs',
+        activeJobs,
+        message: 'Please complete or reassign active jobs before deleting this user'
+      });
+    }
+
+    // Soft delete instead of hard delete to preserve data integrity
+    user.isActive = false;
+    user.deletedAt = new Date();
+    await user.save();
+
+    logger.info('User soft deleted', {
+      userId: req.params.id,
+      employeeNumber: user.employeeNumber,
+      name: user.name
+    });
+
+    res.json({
+      message: 'User deactivated successfully',
+      userId: req.params.id
+    });
+  } catch (error) {
+    logger.error('Delete user error', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.params.id
+    });
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
 });
 
 // Jobs
 router.get('/jobs', async (req, res) => {
-  const jobs = await Job.find().sort({ startTime: -1 });
-  res.json(jobs.map(jobToResponse));
+  const jobs = await Job.find();
+  const sortedJobs = sortJobsForDashboard(jobs);
+  res.json(sortedJobs.map(jobToResponse));
 });
 
 router.post('/jobs', async (req, res) => {
@@ -611,43 +1038,54 @@ router.post('/jobs', async (req, res) => {
       ? clampExpectedDuration(matchedService.expectedMinutes)
       : clampExpectedDuration(requestedExpectedDuration);
 
+    const normalizedTechnicianId = technicianId ? String(technicianId) : 'unknown';
+    const normalizedTechnicianName = technicianName || 'Unknown Technician';
+    const sessionStart = new Date();
+
     const jobData = {
-      technicianId: technicianId || 'unknown',
-      technicianName: technicianName || 'Unknown Technician',
+      technicianId: normalizedTechnicianId,
+      technicianName: normalizedTechnicianName,
       vin: vin || 'UNKNOWN_VIN',
       stockNumber: stockNumber || '',
       vehicleDescription: vehicleDescription || 'Unknown Vehicle',
   serviceType: sanitizedServiceType,
       date: date || new Date().toISOString().split('T')[0],
       status: 'In Progress',
-      startTime: new Date(),
+      startTime: sessionStart,
       expectedDuration: resolvedExpectedDuration,
       qcRequired: false,
       salesPerson: salesPerson || '',
-      assignedTechnicianIds: assignedTechnicianIds || [technicianId || 'unknown'],
+      assignedTechnicianIds: Array.isArray(assignedTechnicianIds)
+        ? assignedTechnicianIds.map(id => String(id))
+        : [normalizedTechnicianId],
       priority: priority || 'Normal',
       year: year || '',
       make: make || '',
       model: model || '',
       vehicleColor: vehicleColor || '',
       activeTechnicians: [{
-        technicianId: technicianId || 'unknown',
-        technicianName: technicianName || 'Unknown Technician',
-        startTime: new Date()
+        technicianId: normalizedTechnicianId,
+        technicianName: normalizedTechnicianName,
+        startTime: sessionStart
+      }],
+      technicianSessions: [{
+        technicianId: normalizedTechnicianId,
+        technicianName: normalizedTechnicianName,
+        startTime: sessionStart
       }]
     };
 
     const job = await Job.create(jobData);
     res.status(201).json(jobToResponse(job));
   } catch (error) {
-    console.error('Job creation error:', error);
+    logger.error('Job creation error', { error: error.message, stack: error.stack });
     res.status(400).json({ error: error.message || 'Failed to create job' });
   }
 });
 
-router.put('/jobs/:id/complete', async (req, res) => {
+router.put('/jobs/:id/complete', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   const end = new Date();
 
   job.status = job.qcRequired ? 'QC Required' : 'Completed';
@@ -655,6 +1093,7 @@ router.put('/jobs/:id/complete', async (req, res) => {
   job.endTime = end;
   job.completedAt = end;
   job.duration = computeJobDuration(job, end);
+  finalizeOpenTechnicianSessions(job, end);
   await job.save();
   res.json(jobToResponse(job));
 });
@@ -662,7 +1101,7 @@ router.put('/jobs/:id/complete', async (req, res) => {
 async function handlePauseJob(req, res) {
   const { reason } = req.body;
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'Paused';
   job.pausedAt = new Date();
@@ -672,13 +1111,13 @@ async function handlePauseJob(req, res) {
 }
 
 // Pause job
-router.put('/jobs/:id/pause', handlePauseJob);
+router.put('/jobs/:id/pause', validateObjectId('id'), handlePauseJob);
 router.post('/jobs/:id/pause', handlePauseJob);
 
 // Resume job
-router.put('/jobs/:id/resume', async (req, res) => {
+router.put('/jobs/:id/resume', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'In Progress';
   job.resumedAt = new Date();
@@ -687,32 +1126,72 @@ router.put('/jobs/:id/resume', async (req, res) => {
 });
 
 async function handleAddTechnician(req, res) {
-  const { technicianId } = req.body;
+  const { technicianId, startTime } = req.body || {};
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
-  
-  const technician = await V2User.findById(technicianId);
-  if (!technician) return res.status(404).json({ error: 'Technician not found' });
-  
-  if (!job.assignedTechnicianIds.includes(technicianId)) {
-    job.assignedTechnicianIds.push(technicianId);
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
+
+  if (!technicianId) {
+    return res.status(400).json({ error: 'technicianId required' });
   }
-  
-  job.activeTechnicians.push({
-    technicianId,
-    technicianName: technician.name,
-    startTime: new Date()
-  });
-  
+
+  let technician = null;
+  if (mongoose.Types.ObjectId.isValid(technicianId)) {
+    technician = await V2User.findById(technicianId);
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ pin: technicianId });
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ employeeNumber: String(technicianId).toUpperCase() });
+  }
+  if (!technician) {
+    return res.status(404).json({ error: 'Technician not found' });
+  }
+
+  const sessionStart = safeDate(startTime) || new Date();
+  startTechnicianSession(job, technician.id, technician.name, sessionStart);
+  await job.save();
+  res.json(jobToResponse(job));
+}
+
+async function handleRemoveTechnician(req, res) {
+  const technicianId = req.body?.technicianId || req.params?.technicianId;
+  const job = await Job.findById(req.params.id);
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
+
+  if (!technicianId) {
+    return res.status(400).json({ error: 'technicianId required' });
+  }
+
+  const sessionEnd = safeDate(req.body?.endTime) || new Date();
+  const removed = stopTechnicianSession(job, technicianId, sessionEnd);
+  if (!removed) {
+    return res.status(404).json({ error: 'Active technician session not found' });
+  }
+
   await job.save();
   res.json(jobToResponse(job));
 }
 
 // Add technician to job
-router.put('/jobs/:id/add-technician', handleAddTechnician);
+router.put('/jobs/:id/add-technician', validateObjectId('id'), handleAddTechnician);
 router.post('/jobs/:id/add-technician', handleAddTechnician);
+router.post('/jobs/:id/remove-technician', handleRemoveTechnician);
+router.delete('/jobs/:id/technicians/:technicianId', validateObjectId('id'), handleRemoveTechnician);
+router.post('/jobs/:id/technicians/:technicianId/end', handleRemoveTechnician);
 
-router.put('/jobs/:id/status', async (req, res) => {
+// Define valid status transitions
+const VALID_TRANSITIONS = {
+  'Pending': ['In Progress', 'Cancelled'],
+  'In Progress': ['Paused', 'QC Required', 'Completed', 'Cancelled'],
+  'Paused': ['In Progress', 'Cancelled'],
+  'QC Required': ['QC Approved', 'In Progress', 'Cancelled'], // Can send back for rework
+  'QC Approved': ['Completed'],
+  'Completed': [], // Final state
+  'Cancelled': []  // Final state
+};
+
+router.put('/jobs/:id/status', validateObjectId('id'), async (req, res) => {
   const { status, qcNotes, pauseReason } = req.body || {};
   if (!status || typeof status !== 'string') {
     return res.status(400).json({ error: 'status required' });
@@ -736,6 +1215,19 @@ router.put('/jobs/:id/status', async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) {
     return res.status(404).json({ error: 'Not found' });
+  }
+
+  // Validate state transition
+  const currentStatus = job.status || 'Pending';
+  const validNextStates = VALID_TRANSITIONS[currentStatus] || [];
+
+  if (!validNextStates.includes(normalizedStatus)) {
+    return res.status(400).json({
+      error: `Invalid transition from ${currentStatus} to ${normalizedStatus}`,
+      currentStatus,
+      requestedStatus: normalizedStatus,
+      validTransitions: validNextStates
+    });
   }
 
   const now = new Date();
@@ -770,6 +1262,7 @@ router.put('/jobs/:id/status', async (req, res) => {
       job.endTime = job.endTime || now;
       job.completedAt = job.completedAt || now;
       job.duration = computeJobDuration(job, job.endTime);
+      finalizeOpenTechnicianSessions(job, job.endTime);
       break;
     case 'Completed':
       job.status = 'Completed';
@@ -777,6 +1270,7 @@ router.put('/jobs/:id/status', async (req, res) => {
       job.endTime = now;
       job.completedAt = now;
       job.duration = computeJobDuration(job, now);
+      finalizeOpenTechnicianSessions(job, now);
       break;
     case 'QC Approved':
       job.status = 'QC Approved';
@@ -784,12 +1278,14 @@ router.put('/jobs/:id/status', async (req, res) => {
       job.endTime = now;
       job.completedAt = now;
       job.duration = computeJobDuration(job, now);
+      finalizeOpenTechnicianSessions(job, now);
       break;
     case 'Cancelled':
       job.status = 'Cancelled';
       job.qcRequired = false;
       job.endTime = now;
       job.completedAt = now;
+      finalizeOpenTechnicianSessions(job, now);
       break;
     default:
       break;
@@ -805,7 +1301,7 @@ router.put('/jobs/:id/status', async (req, res) => {
 
 async function handleQcCompletion(req, res) {
   try {
-    const { employeeNumber, qcNotes, qcPassed, qcCheckerId } = req.body || {};
+    const { employeeNumber, qcNotes, qcPassed, qcCheckerId, qcPin, qcRating, qcFeedback } = req.body || {};
     const job = await Job.findById(req.params.id);
     if (!job) {
       return res.status(404).json({ error: 'Not found' });
@@ -823,9 +1319,22 @@ async function handleQcCompletion(req, res) {
     if (!qcUser && req.user?.sub) {
       qcUser = await V2User.findById(req.user.sub);
     }
+    if (!qcUser && qcPin) {
+      const candidates = await V2User.find({ pinHash: { $exists: true, $ne: null }, isActive: true });
+      for (const candidate of candidates) {
+        if (await candidate.verifyPin(String(qcPin).trim())) {
+          qcUser = candidate;
+          break;
+        }
+      }
+    }
 
     if (!qcUser || !['salesperson', 'manager'].includes(qcUser.role)) {
       return res.status(403).json({ error: 'Only salespeople or managers can complete QC' });
+    }
+
+    if (qcPin && !(await qcUser.verifyPin(String(qcPin).trim()))) {
+      return res.status(401).json({ error: 'Invalid QC PIN' });
     }
 
     const approved = qcPassed !== false;
@@ -852,17 +1361,27 @@ async function handleQcCompletion(req, res) {
     job.qcCompletedAt = now;
     job.qcNotes = qcNotes || '';
     job.qcEmployeeNumber = qcUser.employeeNumber;
+    job.qcCompletedById = qcUser._id;
+    if (qcRating !== undefined) {
+      const ratingValue = Number(qcRating);
+      if (!Number.isNaN(ratingValue)) {
+        job.qcRating = Math.min(5, Math.max(1, Math.round(ratingValue)));
+      }
+    }
+    if (qcFeedback !== undefined) {
+      job.qcFeedback = String(qcFeedback).trim();
+    }
 
     await job.save();
     res.json(jobToResponse(job));
   } catch (error) {
-    console.error('QC completion error:', error);
+    logger.error('QC completion error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 }
 
 // Complete QC
-router.put('/jobs/:id/qc-complete', handleQcCompletion);
+router.put('/jobs/:id/qc-complete', validateObjectId('id'), handleQcCompletion);
 router.post('/jobs/:id/qc', handleQcCompletion);
 
 // Communication endpoints
@@ -886,7 +1405,7 @@ async function handleSendMessage(req, res) {
   
   // In a real implementation, integrate with SMS service like Twilio
   // For now, we'll just log the message and return success
-  console.log('SMS would be sent:', {
+  logger.info('SMS would be sent', {
     message,
     recipients: recipients.map(r => ({ name: r.name, phone: r.phoneNumber })),
     jobId: job._id,
@@ -905,13 +1424,13 @@ router.post('/jobs/:id/send-message', handleSendMessage);
 router.post('/jobs/:id/message', handleSendMessage);
 
 // Get job communications
-router.get('/jobs/:id/messages', async (req, res) => {
+router.get('/jobs/:id/messages', validateObjectId('id'), async (req, res) => {
   // In future, retrieve message history from database
   res.json({ messages: [] });
 });
 
 // Additional job endpoints used by client UI
-router.get('/jobs/:id', async (req, res) => {
+router.get('/jobs/:id', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
   // Minimal details/events structure expected by UI
@@ -926,7 +1445,7 @@ router.get('/jobs/:id', async (req, res) => {
   });
 });
 
-router.patch('/jobs/:id', async (req, res) => {
+router.patch('/jobs/:id', validateObjectId('id'), async (req, res) => {
   const allowed = ['priority', 'salesPerson'];
   const updates = {};
   allowed.forEach(k => { if (req.body[k] != null) updates[k] = req.body[k]; });
@@ -935,7 +1454,7 @@ router.patch('/jobs/:id', async (req, res) => {
   res.json(jobToResponse(job));
 });
 
-router.put('/jobs/:id/start', async (req, res) => {
+router.put('/jobs/:id/start', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
   job.startTime = job.startTime || new Date();
@@ -944,18 +1463,41 @@ router.put('/jobs/:id/start', async (req, res) => {
   res.json(jobToResponse(job));
 });
 
-router.put('/jobs/:id/stop', async (req, res) => {
-  // Treat stop as a no-op for now (could add pause later)
+router.put('/jobs/:id/stop', validateObjectId('id'), async (req, res) => {
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
+  const { technicianId, userId, endTime } = req.body || {};
+  const targetId = technicianId || userId;
+  if (targetId) {
+    stopTechnicianSession(job, targetId, safeDate(endTime) || new Date());
+  }
+  await job.save();
   res.json(jobToResponse(job));
 });
 
-router.put('/jobs/:id/join', async (req, res) => {
-  const { userId } = req.body || {};
+router.put('/jobs/:id/join', validateObjectId('id'), async (req, res) => {
+  const { userId, startTime } = req.body || {};
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
-  if (userId && !job.assignedTechnicianIds.includes(userId)) job.assignedTechnicianIds.push(userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId required' });
+  }
+
+  let technician = null;
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    technician = await V2User.findById(userId);
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ pin: userId });
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ employeeNumber: String(userId).toUpperCase() });
+  }
+  if (!technician) {
+    return res.status(404).json({ error: 'Technician not found' });
+  }
+
+  startTechnicianSession(job, technician.id, technician.name, safeDate(startTime) || new Date());
   await job.save();
   res.json(jobToResponse(job));
 });
@@ -994,8 +1536,8 @@ router.get('/vehicles', async (req, res) => {
       limit = '100'
     } = req.query || {};
 
-    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-    const perPage = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+    const pageNum = parsePositiveInt(page, 1);
+    const perPage = parsePositiveInt(limit, 100, 500);
     const skip = (pageNum - 1) * perPage;
 
     const find = {};
@@ -1023,7 +1565,7 @@ router.get('/vehicles', async (req, res) => {
 
     res.json({ success: true, vehicles, total, page: pageNum, limit: perPage });
   } catch (e) {
-    console.error('List vehicles failed:', e);
+    logger.error('List vehicles failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -1071,7 +1613,7 @@ router.put('/vehicles/:idOrVin', async (req, res) => {
 
     res.json({ success: true, vehicle });
   } catch (error) {
-    console.error('Update vehicle failed:', error);
+    logger.error('Update vehicle failed', { error: error.message, stack: error.stack });
     res.status(400).json({ success: false, error: error.message });
   }
 });
@@ -1135,27 +1677,62 @@ router.post('/vehicles/refresh', async (req, res) => {
     const cleanInt = (v) => { const n = parseInt(String(v || '').replace(/[^0-9-]/g, ''), 10); return Number.isNaN(n) ? null : n; };
     const cleanStr = (v) => (v == null ? '' : String(v).trim());
     const cleanPrice = (v) => (v == null ? '' : String(v).replace(/[^0-9.]/g, '').trim());
-    const ops = rows.filter(r => cleanStr(r.vin)).map(r => {
+    const normalizeCondition = (value) => {
+      const normalized = cleanStr(value).toLowerCase();
+      if (normalized === 'new' || normalized === 'n') return 'New';
+      if (normalized === 'certified' || normalized === 'c') return 'Certified';
+      if (normalized === 'used' || normalized === 'u' || normalized === 'pre-owned') return 'Used';
+      return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Used';
+    };
+
+    let skipped = 0;
+    const ops = rows.map((r) => {
       const doc = {
-        newUsed: cleanStr(r.newUsed), stockNumber: cleanStr(r.stockNumber), vehicle: cleanStr(r.vehicle),
-        year: cleanInt(r.year), make: cleanStr(r.make), model: cleanStr(r.model), body: cleanStr(r.body),
-        drivetrain: cleanStr(r.drivetrain), color: cleanStr(r.color), odometer: cleanStr(r.odometer), price: cleanPrice(r.price),
-        age: cleanInt(r.age), vin: cleanStr(r.vin), tags: cleanStr(r.tags), status: cleanStr(r.status)
+        newUsed: normalizeCondition(r.newUsed),
+        stockNumber: cleanStr(r.stockNumber),
+        vehicle: cleanStr(r.vehicle),
+        year: cleanInt(r.year),
+        make: cleanStr(r.make),
+        model: cleanStr(r.model),
+        body: cleanStr(r.body),
+        drivetrain: cleanStr(r.drivetrain),
+        color: cleanStr(r.color),
+        odometer: cleanStr(r.odometer),
+        price: cleanPrice(r.price),
+        age: cleanInt(r.age),
+        vin: cleanStr(r.vin).toUpperCase(),
+        tags: cleanStr(r.tags),
+        status: cleanStr(r.status)
       };
-      return { updateOne: { filter: { vin: doc.vin }, update: { $set: doc }, upsert: true } };
+      const requiredFieldsPresent = doc.vin && doc.stockNumber && doc.vehicle && doc.year != null && doc.make && doc.model && doc.odometer && doc.price && doc.age != null;
+      if (!requiredFieldsPresent) {
+        skipped += 1;
+        return null;
+      }
+      return {
+        updateOne: {
+          filter: { vin: doc.vin },
+          update: { $set: doc },
+          upsert: true,
+          runValidators: true,
+          setDefaultsOnInsert: true
+        }
+      };
     });
-    if (!ops.length) return res.status(400).json({ success: false, message: 'No VIN rows found.' });
-    const result = await Vehicle.bulkWrite(ops, { ordered: false });
+    const validOps = ops.filter(Boolean);
+    if (!validOps.length) return res.status(400).json({ success: false, message: 'No valid rows with VIN/stock were found.' });
+    const result = await Vehicle.bulkWrite(validOps, { ordered: false });
     const total = await Vehicle.countDocuments();
     res.json({
       success: true,
       source: SHEET_URL,
       upserted: result.upsertedCount || 0,
       modified: result.modifiedCount || 0,
-      total
+      total,
+      skipped
     });
   } catch (e) {
-    console.error('Refresh inventory failed:', e);
+    logger.error('Refresh inventory failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, message: e.message, source: getInventoryCsvUrl() });
   }
 });

@@ -69,8 +69,10 @@ export function setupAuthInterceptor() {
       const isAuthEndpoint = originalRequest.url?.includes('/auth/login') || originalRequest.url?.includes('/auth/refresh');
 
       if (status === 401 && refreshTokenValue && !originalRequest.__isRetryRequest && !isAuthEndpoint) {
+        // Atomic check-and-set to prevent race condition
         if (!refreshRequest) {
-          refreshRequest = V2.post(
+          // Create promise immediately to claim the slot
+          const newRefreshPromise = V2.post(
             '/auth/refresh',
             { refreshToken: refreshTokenValue },
             { __skipAuthRefresh: true }
@@ -103,6 +105,14 @@ export function setupAuthInterceptor() {
             .finally(() => {
               refreshRequest = null;
             });
+
+          // Double-check pattern: only assign if still null
+          if (!refreshRequest) {
+            refreshRequest = newRefreshPromise;
+          } else {
+            // Another request won the race, use that one
+            // Our promise will complete but won't be used
+          }
         }
 
         try {
@@ -150,11 +160,6 @@ export function useAuth() {
 
     setSessionTokens(sessionData.tokens);
     persistSession(sessionData);
-    console.log('User login successful:', {
-      userId: sessionData.user?.id,
-      role: sessionData.user?.role,
-      name: sessionData.user?.name
-    });
     setUser(sessionData.user);
     setError(null);
     return true;
@@ -162,7 +167,6 @@ export function useAuth() {
 
   // Logout handler
   const logout = useCallback((message) => {
-    console.log('User logout');
     clearSessionTokens();
     persistSession(null);
     setUser(null);

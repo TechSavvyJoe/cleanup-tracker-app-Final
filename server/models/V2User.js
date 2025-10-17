@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const Schema = mongoose.Schema;
+const logger = require('../utils/logger');
 
 const V2UserSchema = new Schema({
     username: {
@@ -59,6 +60,16 @@ const V2UserSchema = new Schema({
     },
     lastLogin: {
         type: Date
+    },
+    loginAttempts: {
+        type: Number,
+        default: 0
+    },
+    lockUntil: {
+        type: Date
+    },
+    deletedAt: {
+        type: Date
     }
 }, {
     timestamps: true
@@ -95,7 +106,7 @@ V2UserSchema.methods.verifyPin = async function(pin) {
     try {
         return await bcrypt.compare(pin, this.pinHash);
     } catch (error) {
-        console.error('PIN verification error:', error);
+        logger.error('PIN verification error', { error: error.message, stack: error.stack });
         return false;
     }
 };

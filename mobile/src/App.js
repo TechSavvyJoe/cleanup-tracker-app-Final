@@ -610,45 +610,7 @@ function LoginPanel({
         ))}
       </View>
 
-      {pin.length >= 4 && (
-        <TouchableOpacity
-          style={[styles.primaryButton, loading && styles.buttonDisabled]}
-          onPress={onSubmit}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
-          <LinearGradient
-            colors={[COLORS.accent, COLORS.accentAlt]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.primaryButtonGradient}
-          >
-            <Text style={styles.primaryButtonText}>
-              {loading ? 'Connecting…' : 'Link Workspace'}
-            </Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      )}
-
-      <View style={styles.statusRow}>
-        <View style={[styles.statusChip, connectionStatus === 'reachable' && styles.statusChipSuccess, connectionStatus === 'error' && styles.statusChipError]}>
-          <Ionicons
-            name={
-              connectionStatus === 'reachable'
-                ? 'checkmark-circle-outline'
-                : connectionStatus === 'error'
-                  ? 'alert-circle-outline'
-                  : connectionStatus === 'checking'
-                    ? 'refresh-outline'
-                    : 'radio-outline'
-            }
-            size={14}
-            color={connectionStatus === 'error' ? COLORS.danger : connectionStatus === 'reachable' ? COLORS.success : COLORS.textSecondary}
-          />
-          <Text style={styles.statusChipText}>{statusText}</Text>
-        </View>
-        {loading ? <ActivityIndicator size="small" color={COLORS.accent} /> : null}
-      </View>
+      {/* Removed inline 'Link Workspace' button and connection status from login UI per UX request. */}
     </View>
   );
 }

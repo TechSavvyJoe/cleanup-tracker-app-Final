@@ -62,7 +62,7 @@ function ReportsView({ jobs = [], users = {} }) {
       return {
         totalLast7Days: reportData.last7Days,
         completedLast7Days: reportData.last7Days, // Assume completed for now
-        serviceTypeCounts: reportData.serviceTypes.reduce((acc, st) => ({ ...acc, [st.name]: st.jobs }), {}),
+        serviceTypeCounts: reportData.serviceTypes.reduce((acc, st) => ({ ...acc, [st.name]: st.jobCount || (Array.isArray(st.jobs) ? st.jobs.length : 0) }), {}),
         serviceTypePerformance: reportData.serviceTypes,
         detailerPerformance: reportData.detailerPerformance,
         dailyStats: reportData.dailyTrends.reduce((acc, day) => ({ 

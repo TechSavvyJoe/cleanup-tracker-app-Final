@@ -95,7 +95,7 @@ function SettingsView({ settings, onSettingsChange }) {
 
   const handleToggleActive = useCallback((id) => {
     setServiceTypes((prev) => prev.map((entry) => (
-      entry.id === id ? { ...entry, isActive: !entry.isActive } : entry
+      entry.id === id ? { ...entry, isActive: entry.isActive === false } : entry
     )));
   }, []);
 
@@ -234,250 +234,352 @@ function SettingsView({ settings, onSettingsChange }) {
   }, [toast]);
 
   const disableSaveButton = saving || hasCatalogErrors;
+  const activeServiceCount = serviceTypes.filter((entry) => entry.isActive !== false).length;
+  const inventoryConnected = Boolean((csvUrl || settings?.inventoryCsvUrl || '').trim());
+  const defaultServiceName = serviceTypes.find((entry) => entry.id === defaultServiceTypeId)?.name || 'Not set';
 
   return (
-    <div className="space-y-6 text-[color:var(--x-text-primary)]">
-      <section className="x-card x-fade-in">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-2">
-            <h3 className="x-title">General</h3>
-            <p className="x-subtitle">Controls the display shell for the Cleanup Tracker experience.</p>
+    <div className="space-y-8 text-[color:var(--x-text-primary)]">
+      <header className="bg-gradient-to-r from-blue-500/10 via-blue-600/5 to-transparent border border-blue-600/20 rounded-3xl px-6 py-5 shadow-lg shadow-blue-500/5">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-blue-200">Workspace Settings</p>
+            <h2 className="mt-2 text-2xl lg:text-3xl font-semibold text-white">Shape the Cleanup Tracker experience</h2>
+            <p className="mt-2 text-sm text-blue-100/80 max-w-2xl">
+              Update branding, inventory sources, and service offerings. Changes apply instantly across dashboard, kiosks, and the mobile app.
+            </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
             {hasUnsavedChanges && (
-              <span className="text-xs uppercase tracking-[0.2em] text-amber-400">Unsaved changes</span>
+              <span className="inline-flex items-center justify-center rounded-full border border-amber-400/60 bg-amber-500/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+                Unsaved changes
+              </span>
             )}
             <button
               type="button"
               onClick={() => saveAll()}
               disabled={!hasUnsavedChanges || disableSaveButton}
-              className={`x-button ${disableSaveButton || !hasUnsavedChanges ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition ${
+                !hasUnsavedChanges || disableSaveButton
+                  ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 text-black hover:from-emerald-500 hover:to-emerald-700 shadow-lg shadow-emerald-500/20'
+              }`}
             >
-              {saving ? 'Saving…' : 'Save changes'}
+              {saving ? (
+                <>
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Save changes
+                </>
+              )}
             </button>
           </div>
         </div>
 
-        <div className="x-stack mt-6">
-          <div className="x-stack">
-            <label className="x-subtitle" htmlFor="settings-site-title">Site Title</label>
-            <input
-              id="settings-site-title"
-              type="text"
-              value={siteTitle}
-              onChange={(e) => setSiteTitle(e.target.value)}
-              className="x-input"
-              placeholder="Cleanup Tracker"
-            />
-            <p className="text-xs text-[color:var(--x-text-subtle)]">Displayed in the login experience and header brand lockup.</p>
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-gray-800 bg-black/70 px-4 py-3">
+            <p className="text-[10px] uppercase tracking-[0.25em] text-gray-500">Workspace title</p>
+            <p className="mt-1 text-lg font-semibold text-white">{siteTitle || 'Cleanup Tracker'}</p>
+            <p className="mt-1 text-xs text-gray-500">Shown on login and in the top navigation.</p>
+          </div>
+          <div className="rounded-2xl border border-gray-800 bg-black/70 px-4 py-3">
+            <p className="text-[10px] uppercase tracking-[0.25em] text-gray-500">Inventory feed</p>
+            <p className={`mt-1 text-lg font-semibold ${inventoryConnected ? 'text-emerald-300' : 'text-amber-300'}`}>
+              {inventoryConnected ? 'Connected' : 'Not configured'}
+            </p>
+            <p className="mt-1 text-xs text-gray-500">Uses a published CSV from Google Sheets.</p>
+          </div>
+          <div className="rounded-2xl border border-gray-800 bg-black/70 px-4 py-3">
+            <p className="text-[10px] uppercase tracking-[0.25em] text-gray-500">Service catalog</p>
+            <p className="mt-1 text-lg font-semibold text-white">{serviceTypes.length} total • {activeServiceCount} active</p>
+            <p className="mt-1 text-xs text-gray-500">Default package: <span className="text-blue-200 font-semibold">{defaultServiceName}</span></p>
           </div>
         </div>
-      </section>
+      </header>
 
-      <section className="x-card x-fade-in">
-        <div className="space-y-2">
-          <h3 className="x-title">Inventory Source</h3>
-          <p className="x-subtitle">Connect the live Google Sheets feed for vehicle inventory.</p>
-        </div>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[2fr_minmax(320px,1fr)]">
+        <div className="space-y-6">
+          <section className="rounded-3xl border border-gray-800 bg-black/70 px-6 py-6 shadow-xl shadow-black/20">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Branding</p>
+                <h3 className="text-white text-lg font-semibold">Workspace identity</h3>
+                <p className="text-sm text-gray-500">Set the title that appears across login, dashboard headers, and emails.</p>
+              </div>
+              {hasUnsavedChanges && (
+                <span className="rounded-full border border-amber-400/50 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-200 uppercase tracking-[0.2em]">
+                  Pending save
+                </span>
+              )}
+            </div>
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="text-xs uppercase tracking-[0.2em] text-gray-500" htmlFor="settings-site-title">Workspace title</label>
+                <input
+                  id="settings-site-title"
+                  type="text"
+                  value={siteTitle}
+                  onChange={(e) => setSiteTitle(e.target.value)}
+                  className="mt-2 w-full rounded-xl border border-gray-700 bg-black py-2.5 px-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Cleanup Tracker"
+                />
+                <p className="mt-1 text-xs text-gray-500">Keep it short and instantly recognizable.</p>
+              </div>
+              <div className="rounded-2xl border border-gray-800 bg-gray-900/60 px-4 py-4 text-xs text-gray-500">
+                <p>Tip: include your dealership or campus name to help technicians confirm they are in the right workspace.</p>
+              </div>
+            </div>
+          </section>
 
-        <div className="x-stack mt-6">
-          <div className="x-stack">
-            <label className="x-subtitle" htmlFor="settings-csv-url">Google Sheets CSV URL</label>
-            <input
-              id="settings-csv-url"
-              type="url"
-              value={csvUrl}
-              onChange={(e) => setCsvUrl(e.target.value)}
-              placeholder="https://docs.google.com/spreadsheets/.../pub?output=csv"
-              className="x-input"
-            />
-            <p className="text-xs text-[color:var(--x-text-subtle)]">Supports live updates; use the published CSV link from Google Sheets.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => saveAll()}
-              disabled={!hasUnsavedChanges || disableSaveButton}
-              className={`x-button ${disableSaveButton || !hasUnsavedChanges ? 'opacity-60 cursor-not-allowed' : ''}`}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveAndImport}
-              disabled={saving || hasCatalogErrors}
-              className={`x-button x-button--accent ${saving || hasCatalogErrors ? 'opacity-60 cursor-not-allowed' : ''}`}
-            >
-              Sync CSV &amp; Refresh Inventory
-            </button>
-            <button
-              type="button"
-              onClick={handleRefreshInventory}
-              className="x-button x-button--secondary"
-            >
-              Refresh Inventory Only
-            </button>
-          </div>
-        </div>
-      </section>
+          <section className="rounded-3xl border border-gray-800 bg-black/70 px-6 py-6 shadow-xl shadow-black/15">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Inventory feed</p>
+                <h3 className="text-white text-lg font-semibold">Google Sheets connection</h3>
+                <p className="text-sm text-gray-500">Sync vehicle availability via the published CSV link. Changes push to the board automatically.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => saveAll()}
+                  disabled={!hasUnsavedChanges || disableSaveButton}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${!hasUnsavedChanges || disableSaveButton ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-blue-500/20 text-blue-200 hover:bg-blue-500/30'}`}
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAndImport}
+                  disabled={saving || hasCatalogErrors}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${saving || hasCatalogErrors ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-600 text-black hover:from-emerald-500 hover:to-emerald-700'}`}
+                >
+                  Sync & refresh inventory
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRefreshInventory}
+                  className="rounded-full px-4 py-2 text-sm font-semibold border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500"
+                >
+                  Refresh only
+                </button>
+              </div>
+            </div>
+            <div className="mt-5">
+              <label className="text-xs uppercase tracking-[0.2em] text-gray-500" htmlFor="settings-csv-url">Published CSV URL</label>
+              <input
+                id="settings-csv-url"
+                type="url"
+                value={csvUrl}
+                onChange={(e) => setCsvUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/.../pub?output=csv"
+                className="mt-2 w-full rounded-xl border border-gray-700 bg-black py-2.5 px-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">Use <span className="text-blue-300">File → Share → Publish to web → CSV</span> in Google Sheets.</p>
+            </div>
+          </section>
 
-      <section className="x-card x-fade-in">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-2">
-            <h3 className="x-title">Service Catalog</h3>
-            <p className="x-subtitle">Define the services, durations, and availability your team can schedule.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-[color:var(--x-text-subtle)]">{serviceTypes.length}/{SERVICE_TYPE_LIMITS.maxEntries} configured</span>
-            <button
-              type="button"
-              onClick={handleAddServiceType}
-              className="x-button x-button--secondary"
-            >
-              Add service type
-            </button>
-          </div>
-        </div>
+          <section className="rounded-3xl border border-gray-800 bg-black/70 px-6 py-6 shadow-xl shadow-black/15">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Service catalog</p>
+                <h3 className="text-white text-lg font-semibold">Packages & expectations</h3>
+                <p className="text-sm text-gray-500">Adjust offerings, durations, and availability. Updates appear instantly in job creation.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className="inline-flex items-center rounded-full border border-gray-700 px-3 py-1 text-xs text-gray-400">
+                  {serviceTypes.length}/{SERVICE_TYPE_LIMITS.maxEntries} configured
+                </span>
+                <button
+                  type="button"
+                  onClick={handleAddServiceType}
+                  className="rounded-full border border-blue-500/50 px-4 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-500/10"
+                >
+                  Add service type
+                </button>
+              </div>
+            </div>
 
-        <div className="mt-6 space-y-4">
-          {serviceTypes.map((service, index) => {
-            const error = catalogErrors[service.id];
-            const isDefault = service.id === defaultServiceTypeId;
-            return (
-              <div key={service.id} className="rounded-xl border border-[color:var(--x-border-strong)] bg-[color:var(--x-surface-raised)] p-4 shadow-sm">
-                <div className="flex flex-col gap-4 md:flex-row md:items-end">
-                  <div className="flex-1">
-                    <label className="x-subtitle" htmlFor={`service-name-${service.id}`}>Service name</label>
-                    <input
-                      id={`service-name-${service.id}`}
-                      type="text"
-                      value={service.name}
-                      onChange={(e) => handleServiceTypeChange(service.id, 'name', e.target.value)}
-                      className="x-input"
-                      placeholder="Premium Detail"
-                    />
-                    <p className="text-xs text-[color:var(--x-text-subtle)]">Visible in job creation flows and reporting.</p>
-                  </div>
+            <div className="mt-5 space-y-5">
+              {serviceTypes.map((service, index) => {
+                const error = catalogErrors[service.id];
+                const isDefault = service.id === defaultServiceTypeId;
+                const canMoveUp = index > 0;
+                const canMoveDown = index < serviceTypes.length - 1;
+                const onlyOne = serviceTypes.length === 1;
 
-                  <div className="md:w-56">
-                    <label className="x-subtitle" htmlFor={`service-duration-${service.id}`}>Target duration (minutes)</label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        id={`service-duration-${service.id}`}
-                        type="number"
-                        min={SERVICE_TYPE_LIMITS.minMinutes}
-                        max={SERVICE_TYPE_LIMITS.maxMinutes}
-                        value={service.expectedMinutes}
-                        onChange={(e) => handleServiceTypeChange(service.id, 'expectedMinutes', e.target.value)}
-                        className="x-input"
-                      />
-                      <span className="text-xs text-[color:var(--x-text-subtle)] whitespace-nowrap">{formatExpectedMinutes(service.expectedMinutes)}</span>
+                return (
+                  <div key={service.id} className="rounded-3xl border border-gray-800 bg-black/60 px-5 py-5 shadow-inner">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
+                      <div className="flex-1 space-y-2">
+                        <label className="text-xs uppercase tracking-[0.2em] text-gray-500" htmlFor={`service-name-${service.id}`}>Service name</label>
+                        <input
+                          id={`service-name-${service.id}`}
+                          type="text"
+                          value={service.name}
+                          onChange={(e) => handleServiceTypeChange(service.id, 'name', e.target.value)}
+                          className="w-full rounded-xl border border-gray-700 bg-black py-2.5 px-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Premium Detail"
+                        />
+                        <p className="text-xs text-gray-500">Visible in job launch flows and reporting.</p>
+                      </div>
+                      <div className="lg:w-52 space-y-2">
+                        <label className="text-xs uppercase tracking-[0.2em] text-gray-500" htmlFor={`service-duration-${service.id}`}>Duration (minutes)</label>
+                        <div className="flex items-center gap-3">
+                          <input
+                            id={`service-duration-${service.id}`}
+                            type="number"
+                            min={SERVICE_TYPE_LIMITS.minMinutes}
+                            max={SERVICE_TYPE_LIMITS.maxMinutes}
+                            value={service.expectedMinutes}
+                            onChange={(e) => handleServiceTypeChange(service.id, 'expectedMinutes', e.target.value)}
+                            className="w-full rounded-xl border border-gray-700 bg-black py-2.5 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <span className="text-xs text-gray-500 whitespace-nowrap">{formatExpectedMinutes(service.expectedMinutes)}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs uppercase tracking-[0.2em] text-gray-500">Status</span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleActive(service.id)}
+                          className={`rounded-full px-4 py-2 text-sm font-semibold transition ${service.isActive !== false ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/50' : 'bg-gray-800 text-gray-500 border border-gray-700'}`}
+                        >
+                          {service.isActive !== false ? 'Active' : 'Disabled'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 space-y-3">
+                      <div>
+                        <label className="text-xs uppercase tracking-[0.2em] text-gray-500" htmlFor={`service-description-${service.id}`}>Description</label>
+                        <textarea
+                          id={`service-description-${service.id}`}
+                          value={service.description}
+                          onChange={(e) => handleServiceTypeChange(service.id, 'description', e.target.value)}
+                          className="mt-2 w-full rounded-xl border border-gray-700 bg-black py-3 px-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[72px]"
+                          placeholder="Fast track reconditioning for frontline units."
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                        {isDefault ? (
+                          <span className="inline-flex items-center gap-2 rounded-full border border-blue-400/40 bg-blue-500/15 px-3 py-1 font-semibold text-blue-200 uppercase tracking-[0.2em]">
+                            Default selection
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSetDefaultServiceType(service.id)}
+                            className="text-blue-300 hover:text-blue-100 font-semibold uppercase tracking-[0.2em]"
+                          >
+                            Make default
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleServiceTypeReorder(service.id, 'up')}
+                          disabled={!canMoveUp}
+                          className={`uppercase tracking-[0.2em] ${canMoveUp ? 'text-gray-400 hover:text-white' : 'text-gray-600 cursor-not-allowed'}`}
+                        >
+                          Move up
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleServiceTypeReorder(service.id, 'down')}
+                          disabled={!canMoveDown}
+                          className={`uppercase tracking-[0.2em] ${canMoveDown ? 'text-gray-400 hover:text-white' : 'text-gray-600 cursor-not-allowed'}`}
+                        >
+                          Move down
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDuplicateServiceType(service.id)}
+                          className="text-gray-400 hover:text-white uppercase tracking-[0.2em]"
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveServiceType(service.id)}
+                          disabled={onlyOne}
+                          className={`text-red-300 hover:text-red-200 uppercase tracking-[0.2em] ${onlyOne ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      {error && (
+                        <div className="rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+                          {error}
+                        </div>
+                      )}
                     </div>
                   </div>
+                );
+              })}
 
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs uppercase tracking-[0.15em] text-[color:var(--x-text-subtle)]">Active</span>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleActive(service.id)}
-                      className={`px-4 py-2 rounded-full text-sm font-semibold transition ${service.isActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-gray-800 text-gray-400 border border-gray-700'}`}
-                    >
-                      {service.isActive ? 'Enabled' : 'Disabled'}
-                    </button>
-                  </div>
+              {serviceTypes.length === 0 && (
+                <div className="rounded-3xl border border-dashed border-gray-700 bg-black/50 px-6 py-8 text-center text-sm text-gray-500">
+                  No service types configured. Add at least one to unlock job scheduling.
                 </div>
-
-                <div className="mt-3">
-                  <label className="x-subtitle" htmlFor={`service-description-${service.id}`}>Description</label>
-                  <textarea
-                    id={`service-description-${service.id}`}
-                    value={service.description}
-                    onChange={(e) => handleServiceTypeChange(service.id, 'description', e.target.value)}
-                    className="x-input min-h-[72px]"
-                    placeholder="Fast track reconditioning for frontline units."
-                  />
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  {isDefault ? (
-                    <span className="inline-flex items-center gap-2 rounded-full bg-blue-500/20 px-3 py-1 text-xs font-semibold text-blue-200">
-                      Default selection
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleSetDefaultServiceType(service.id)}
-                      className="text-xs font-semibold uppercase tracking-[0.15em] text-blue-300 hover:text-blue-200"
-                    >
-                      Make default
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => handleServiceTypeReorder(service.id, 'up')}
-                    disabled={index === 0}
-                    className={`text-xs uppercase tracking-[0.15em] ${index === 0 ? 'text-gray-600 cursor-not-allowed' : 'text-[color:var(--x-text-subtle)] hover:text-white'}`}
-                  >
-                    Move up
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleServiceTypeReorder(service.id, 'down')}
-                    disabled={index === serviceTypes.length - 1}
-                    className={`text-xs uppercase tracking-[0.15em] ${index === serviceTypes.length - 1 ? 'text-gray-600 cursor-not-allowed' : 'text-[color:var(--x-text-subtle)] hover:text-white'}`}
-                  >
-                    Move down
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDuplicateServiceType(service.id)}
-                    className="text-xs uppercase tracking-[0.15em] text-[color:var(--x-text-subtle)] hover:text-white"
-                  >
-                    Duplicate
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveServiceType(service.id)}
-                    disabled={serviceTypes.length === 1}
-                    className={`text-xs uppercase tracking-[0.15em] ${serviceTypes.length === 1 ? 'text-gray-600 cursor-not-allowed' : 'text-red-300 hover:text-red-200'}`}
-                  >
-                    Remove
-                  </button>
-                </div>
-
-                {error && (
-                  <p className="mt-3 text-xs text-red-300">{error}</p>
-                )}
-              </div>
-            );
-          })}
-
-          {serviceTypes.length === 0 && (
-            <div className="rounded-xl border border-dashed border-[color:var(--x-border-muted)] bg-black/40 p-6 text-center text-sm text-[color:var(--x-text-subtle)]">
-              No service types configured. Add at least one to unlock job scheduling.
+              )}
             </div>
-          )}
+          </section>
         </div>
 
-        <div className="mt-6 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={handleAddServiceType}
-            className="x-button x-button--secondary"
-          >
-            Add service type
-          </button>
-          <button
-            type="button"
-            onClick={() => saveAll()}
-            disabled={!hasUnsavedChanges || disableSaveButton}
-            className={`x-button ${disableSaveButton || !hasUnsavedChanges ? 'opacity-60 cursor-not-allowed' : ''}`}
-          >
-            {saving ? 'Saving…' : 'Publish updates'}
-          </button>
-        </div>
-      </section>
+        <aside className="space-y-4">
+          <div className="rounded-3xl border border-gray-800 bg-black/70 px-6 py-5 shadow-lg shadow-black/20">
+            <h4 className="text-white text-base font-semibold">Quick actions</h4>
+            <p className="mt-1 text-sm text-gray-500">Shortcuts for after catalog or inventory updates.</p>
+            <div className="mt-4 flex flex-col gap-2 text-sm">
+              <button
+                type="button"
+                onClick={() => saveAll()}
+                disabled={!hasUnsavedChanges || disableSaveButton}
+                className={`rounded-xl px-4 py-3 text-left font-semibold transition ${!hasUnsavedChanges || disableSaveButton ? 'bg-gray-900 text-gray-600 cursor-not-allowed' : 'bg-blue-500/15 text-blue-200 hover:bg-blue-500/25'}`}
+              >
+                Save workspace changes
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveAndImport}
+                disabled={saving || hasCatalogErrors}
+                className={`rounded-xl px-4 py-3 text-left font-semibold transition ${saving || hasCatalogErrors ? 'bg-gray-900 text-gray-600 cursor-not-allowed' : 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25'}`}
+              >
+                Save & refresh inventory feed
+              </button>
+              <button
+                type="button"
+                onClick={handleRefreshInventory}
+                className="rounded-xl border border-gray-700 px-4 py-3 text-left font-semibold text-gray-300 hover:text-white hover:border-gray-500"
+              >
+                Trigger inventory refresh only
+              </button>
+            </div>
+            <p className="mt-4 text-xs text-gray-500">Need different environments? Configure API keys and staging connections in <span className="text-blue-300">Developer Tools</span>.</p>
+          </div>
+
+          <div className="rounded-3xl border border-gray-800 bg-black/70 px-6 py-5 shadow-lg shadow-black/20">
+            <h4 className="text-white text-base font-semibold">Catalog health</h4>
+            <ul className="mt-3 space-y-2 text-sm text-gray-400">
+              <li>• {activeServiceCount} active service{activeServiceCount === 1 ? '' : 's'} available to detailers.</li>
+              <li>• Default package: <span className="text-white font-semibold">{defaultServiceName}</span>.</li>
+              <li>• Inventory feed is {inventoryConnected ? <span className="text-emerald-300">connected</span> : <span className="text-amber-300">not connected</span>}.</li>
+              {hasCatalogErrors ? <li className="text-red-300">• Resolve catalog validation errors before saving.</li> : null}
+            </ul>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

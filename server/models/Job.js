@@ -70,6 +70,13 @@ const jobSchema = new mongoose.Schema({
         startTime: Date,
         endTime: Date
     }],
+    technicianSessions: [{
+        technicianId: String,
+        technicianName: String,
+        startTime: Date,
+        endTime: Date,
+        durationMinutes: Number
+    }],
     pausedAt: Date,
     pauseReason: String,
     resumedAt: Date,
@@ -87,6 +94,16 @@ const jobSchema = new mongoose.Schema({
     qcCompletedAt: Date,
     qcNotes: String,
     qcEmployeeNumber: String,
+    qcCompletedById: {
+        type: Schema.Types.ObjectId,
+        ref: 'V2User'
+    },
+    qcRating: {
+        type: Number,
+        min: 1,
+        max: 5
+    },
+    qcFeedback: String,
 
     // Additional tracking
     actualStartTime: Date,

@@ -19,11 +19,11 @@ const Register = ({ registerUser, errors }) => {
     const onSubmit = e => {
         e.preventDefault();
         if (password !== password2) {
-            console.log('Passwords do not match');
-        } else {
-            const newUser = { username, password, role };
-            registerUser(newUser, navigate);
+            // Passwords do not match - validation should show this in UI
+            return;
         }
+        const newUser = { username, password, role };
+        registerUser(newUser, navigate);
     };
 
     return (

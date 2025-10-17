@@ -7,6 +7,7 @@ const Vehicle = require('../models/Vehicle');
 const axios = require('axios');
 const csv = require('csv-parser');
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 const settingsStore = require('../utils/settingsStore');
 const {
   getInventoryCsvUrl,
@@ -41,7 +42,7 @@ function escapeRegex(str) {
 }
 
 function sanitizeUser(userDoc) {
-  if (!userDoc) return null;
+  if (!userDoc) { return null; }
   const user = userDoc.toObject({ virtuals: true });
   delete user.pinHash;
   delete user.passwordHash;
@@ -54,7 +55,7 @@ function sanitizeUser(userDoc) {
 }
 
 async function findUserByCredential(identifier) {
-  if (!identifier) return null;
+  if (!identifier) { return null; }
   const normalizedEmployee = String(identifier).toUpperCase();
   const normalizedUsername = String(identifier).toLowerCase();
   return V2User.findOne({
@@ -67,7 +68,7 @@ async function findUserByCredential(identifier) {
 }
 
 async function findUserByPin(pin) {
-  if (!pin) return null;
+  if (!pin) { return null; }
   const candidates = await V2User.find({
     pinHash: { $exists: true, $ne: null },
     isActive: { $ne: false }
@@ -81,7 +82,7 @@ async function findUserByPin(pin) {
 }
 
 async function isPinInUse(pin, excludeId) {
-  if (!pin) return false;
+  if (!pin) { return false; }
   const query = {
     pinHash: { $exists: true, $ne: null }
   };
@@ -125,12 +126,231 @@ function authenticateToken(req, res, next) {
 }
 
 function jobToResponse(jobDoc) {
-  if (!jobDoc) return null;
+  if (!jobDoc) { return null; }
+  const now = new Date();
   const job = jobDoc.toObject({ virtuals: true });
   job.id = String(job._id);
   delete job._id;
   delete job.__v;
+
+  job.vehicleSummary = buildVehicleSummary(job);
+  job.vehicle = {
+    year: job.year || '',
+    make: job.make || '',
+    model: job.model || '',
+    color: job.vehicleColor || job.color || '',
+    stockNumber: job.stockNumber || '',
+    vin: job.vin || '',
+    description: job.vehicleDescription || '',
+    summary: job.vehicleSummary
+  };
+
+  const sessions = Array.isArray(job.technicianSessions) ? job.technicianSessions : [];
+  job.technicianSessions = sessions
+    .map(session => enrichTechnicianSession(session, now))
+    .sort((a, b) => {
+      const aStart = safeDate(a.startTime)?.getTime() || 0;
+      const bStart = safeDate(b.startTime)?.getTime() || 0;
+      return aStart - bStart;
+    });
+
+  job.activeTechnicians = job.technicianSessions
+    .filter(session => session.isActive)
+    .map(session => ({
+      technicianId: session.technicianId,
+      technicianName: session.technicianName,
+      startTime: session.startTime,
+      elapsedSeconds: session.elapsedSeconds
+    }));
+
+  if (!Array.isArray(job.assignedTechnicianIds)) {
+    job.assignedTechnicianIds = [];
+  } else {
+    job.assignedTechnicianIds = job.assignedTechnicianIds.map(String);
+  }
+
   return job;
+}
+
+function safeDate(value) {
+  if (!value) { return null; }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildVehicleSummary(job) {
+  const year = (job.year || '').toString().trim();
+  const make = (job.make || '').toString().trim();
+  const model = (job.model || '').toString().trim();
+  const description = (job.vehicleDescription || '').trim();
+  const color = (job.vehicleColor || job.color || '').toString().trim();
+
+  const headlineParts = [year, make, model].filter(Boolean);
+  const headline = headlineParts.join(' ');
+
+  if (headline) {
+    return color ? `${headline} • ${color}` : headline;
+  }
+
+  if (description) {
+    return color ? `${description} • ${color}` : description;
+  }
+
+  if (job.stockNumber) {
+    return `Stock ${job.stockNumber}`;
+  }
+
+  return 'Vehicle';
+}
+
+function enrichTechnicianSession(session = {}, now = new Date()) {
+  const start = safeDate(session.startTime);
+  const end = safeDate(session.endTime);
+  const effectiveEnd = end || now;
+  const durationMinutes = Number.isFinite(session.durationMinutes)
+    ? session.durationMinutes
+    : (start ? Math.max(0, Math.round((effectiveEnd.getTime() - start.getTime()) / (1000 * 60))) : 0);
+  const elapsedSeconds = start
+    ? Math.max(0, Math.floor((effectiveEnd.getTime() - start.getTime()) / 1000))
+    : 0;
+
+  return {
+    technicianId: session.technicianId || '',
+    technicianName: session.technicianName || '',
+    startTime: start ? start.toISOString() : null,
+    endTime: end ? end.toISOString() : null,
+    durationMinutes,
+    elapsedSeconds,
+    isActive: !end
+  };
+}
+
+function ensureTechnicianCollections(job) {
+  if (!Array.isArray(job.technicianSessions)) {
+    job.technicianSessions = [];
+  }
+  if (!Array.isArray(job.activeTechnicians)) {
+    job.activeTechnicians = [];
+  }
+  if (!Array.isArray(job.assignedTechnicianIds)) {
+    job.assignedTechnicianIds = [];
+  }
+}
+
+function syncActiveTechnicians(job) {
+  ensureTechnicianCollections(job);
+  job.activeTechnicians = job.technicianSessions
+    .filter(session => !session.endTime)
+    .map(session => ({
+      technicianId: session.technicianId,
+      technicianName: session.technicianName,
+      startTime: session.startTime
+    }));
+  return job.activeTechnicians;
+}
+
+function startTechnicianSession(job, technicianId, technicianName, startTime = new Date()) {
+  if (!technicianId) { return; }
+  ensureTechnicianCollections(job);
+  const normalizedId = String(technicianId);
+  const existingSession = job.technicianSessions.find(session => session.technicianId === normalizedId && !session.endTime);
+  if (existingSession) {
+    if (!existingSession.startTime) {
+      existingSession.startTime = startTime;
+    }
+    if (technicianName && technicianName !== existingSession.technicianName) {
+      existingSession.technicianName = technicianName;
+    }
+  } else {
+    job.technicianSessions.push({
+      technicianId: normalizedId,
+      technicianName: technicianName || '',
+      startTime
+    });
+  }
+  if (!job.assignedTechnicianIds.includes(normalizedId)) {
+    job.assignedTechnicianIds.push(normalizedId);
+  }
+  syncActiveTechnicians(job);
+}
+
+function stopTechnicianSession(job, technicianId, endTime = new Date()) {
+  if (!technicianId) { return false; }
+  ensureTechnicianCollections(job);
+  const normalizedId = String(technicianId);
+  const session = job.technicianSessions.find(entry => entry.technicianId === normalizedId && !entry.endTime);
+  if (!session) {
+    return false;
+  }
+  session.endTime = endTime;
+  const start = safeDate(session.startTime);
+  if (start) {
+    session.durationMinutes = Math.max(0, Math.round((endTime.getTime() - start.getTime()) / (1000 * 60)));
+  }
+  syncActiveTechnicians(job);
+  return true;
+}
+
+function finalizeOpenTechnicianSessions(job, endTime = new Date()) {
+  ensureTechnicianCollections(job);
+  job.technicianSessions.forEach(session => {
+    if (!session.endTime) {
+      session.endTime = endTime;
+      const start = safeDate(session.startTime);
+      if (start) {
+        session.durationMinutes = Math.max(0, Math.round((endTime.getTime() - start.getTime()) / (1000 * 60)));
+      }
+    }
+  });
+  syncActiveTechnicians(job);
+}
+
+const STATUS_SORT_ORDER = {
+  'in progress': 0,
+  'qc required': 1,
+  'paused': 2,
+  'pending': 3,
+  'qc approved': 4,
+  'completed': 5,
+  'cancelled': 6
+};
+
+function getStatusRank(status) {
+  if (!status) { return STATUS_SORT_ORDER.pending || 3; }
+  const normalized = status.toString().toLowerCase();
+  return STATUS_SORT_ORDER.hasOwnProperty(normalized) ? STATUS_SORT_ORDER[normalized] : 99;
+}
+
+function getComparableTimestamp(jobDoc) {
+  const start = safeDate(jobDoc.startTime);
+  const resumed = safeDate(jobDoc.resumedAt);
+  const created = safeDate(jobDoc.createdAt || jobDoc.date);
+  const updated = safeDate(jobDoc.updatedAt);
+
+  return (start && start.getTime()) ||
+    (resumed && resumed.getTime()) ||
+    (updated && updated.getTime()) ||
+    (created && created.getTime()) ||
+    0;
+}
+
+function sortJobsForDashboard(jobDocs = []) {
+  return [...jobDocs].sort((a, b) => {
+    const statusRankDiff = getStatusRank(a.status) - getStatusRank(b.status);
+    if (statusRankDiff !== 0) {
+      return statusRankDiff;
+    }
+    const timeDiff = getComparableTimestamp(b) - getComparableTimestamp(a);
+    if (timeDiff !== 0) {
+      return timeDiff;
+    }
+    const aPriority = (a.priority || '').toString().toLowerCase();
+    const bPriority = (b.priority || '').toString().toLowerCase();
+    const priorityOrder = ['urgent', 'high', 'normal', 'low'];
+    const aPriorityRank = priorityOrder.indexOf(aPriority);
+    const bPriorityRank = priorityOrder.indexOf(bPriority);
+    return (aPriorityRank === -1 ? 99 : aPriorityRank) - (bPriorityRank === -1 ? 99 : bPriorityRank);
+  });
 }
 
 function computeJobDuration(job, endTime = new Date()) {
@@ -186,7 +406,7 @@ router.post('/jobs/populate-vehicle-details', async (req, res) => {
           job.make = vehicle.make || '';
           job.model = vehicle.model || '';
           job.vehicleColor = vehicle.color || '';
-          if (!job.salesPerson) job.salesPerson = '';
+          if (!job.salesPerson) { job.salesPerson = ''; }
           if (!job.priority) job.priority = 'Normal';
           await job.save();
           updated++;
@@ -212,8 +432,8 @@ router.get('/reports', async (req, res) => {
     let dateFilter = {};
     if (startDate || endDate) {
       dateFilter.date = {};
-      if (startDate) dateFilter.date.$gte = startDate;
-      if (endDate) dateFilter.date.$lte = endDate;
+  if (startDate) { dateFilter.date.$gte = startDate; }
+  if (endDate) { dateFilter.date.$lte = endDate; }
     }
     
     // Get all jobs for the period
@@ -235,8 +455,28 @@ router.get('/reports', async (req, res) => {
     // Calculate detailer performance
     const detailerStats = {};
     const serviceTypeStats = {};
+    const MAX_HISTORY = 50;
+    const MAX_RECENT = 10;
     
     completedJobs.forEach(job => {
+      const completionDate = safeDate(job.completedAt) || safeDate(job.endTime) || safeDate(job.updatedAt) || safeDate(job.startTime);
+      const durationMinutes = Number.isFinite(job.duration) && job.duration > 0
+        ? job.duration
+        : computeJobDuration(job, completionDate || new Date());
+      const summary = {
+        id: String(job._id),
+        vehicleSummary: buildVehicleSummary(job),
+        serviceType: job.serviceType || 'Unknown',
+        completedAt: completionDate ? completionDate.toISOString() : null,
+        durationMinutes,
+        technicianName: job.technicianName || '',
+        salesPerson: job.salesPerson || '',
+        priority: job.priority || 'Normal',
+        stockNumber: job.stockNumber || '',
+        vin: job.vin || '',
+        status: job.status
+      };
+
       // Detailer performance
       const techName = job.technicianName || 'Unknown';
       if (!detailerStats[techName]) {
@@ -246,38 +486,54 @@ router.get('/reports', async (req, res) => {
           totalTime: 0,
           minTime: Infinity,
           maxTime: 0,
-          recentJobs: 0
+          jobs: [],
+          recentJobs: []
         };
       }
-      
-      detailerStats[techName].totalJobs++;
-      detailerStats[techName].totalTime += job.duration || 0;
-      detailerStats[techName].minTime = Math.min(detailerStats[techName].minTime, job.duration || 0);
-      detailerStats[techName].maxTime = Math.max(detailerStats[techName].maxTime, job.duration || 0);
-      
-      // Count recent jobs (last 7 days)
-      const jobDate = new Date(job.createdAt || job.startTime);
-      if (jobDate >= sevenDaysAgo) {
-        detailerStats[techName].recentJobs++;
+      const techStat = detailerStats[techName];
+      techStat.totalJobs += 1;
+      techStat.totalTime += durationMinutes;
+      techStat.minTime = Math.min(techStat.minTime, durationMinutes);
+      techStat.maxTime = Math.max(techStat.maxTime, durationMinutes);
+      techStat.jobs.push(summary);
+      if (techStat.jobs.length > MAX_HISTORY) {
+        techStat.jobs = techStat.jobs.slice(-MAX_HISTORY);
+      }
+      if (completionDate && completionDate >= sevenDaysAgo) {
+        techStat.recentJobs.push(summary);
+        if (techStat.recentJobs.length > MAX_RECENT) {
+          techStat.recentJobs = techStat.recentJobs.slice(-MAX_RECENT);
+        }
       }
       
       // Service type performance
-      const serviceType = job.serviceType || 'Unknown';
+      const serviceType = summary.serviceType;
       if (!serviceTypeStats[serviceType]) {
         serviceTypeStats[serviceType] = {
-          jobs: 0,
+          name: serviceType,
+          jobCount: 0,
           totalTime: 0,
-          avgTime: 0,
           minTime: Infinity,
-          maxTime: 0
+          maxTime: 0,
+          jobs: []
         };
       }
-      
-      serviceTypeStats[serviceType].jobs++;
-      serviceTypeStats[serviceType].totalTime += job.duration || 0;
-      serviceTypeStats[serviceType].minTime = Math.min(serviceTypeStats[serviceType].minTime, job.duration || 0);
-      serviceTypeStats[serviceType].maxTime = Math.max(serviceTypeStats[serviceType].maxTime, job.duration || 0);
+      const serviceStat = serviceTypeStats[serviceType];
+      serviceStat.jobCount += 1;
+      serviceStat.totalTime += durationMinutes;
+      serviceStat.minTime = Math.min(serviceStat.minTime, durationMinutes);
+      serviceStat.maxTime = Math.max(serviceStat.maxTime, durationMinutes);
+      serviceStat.jobs.push(summary);
+      if (serviceStat.jobs.length > MAX_HISTORY) {
+        serviceStat.jobs = serviceStat.jobs.slice(-MAX_HISTORY);
+      }
     });
+    
+    const sortByCompletedDesc = (a, b) => {
+      const aDate = safeDate(a.completedAt)?.getTime() || 0;
+      const bDate = safeDate(b.completedAt)?.getTime() || 0;
+      return bDate - aDate;
+    };
     
     // Format detailer performance with proper averages
     const detailerPerformance = Object.values(detailerStats).map(stat => ({
@@ -285,17 +541,19 @@ router.get('/reports', async (req, res) => {
       totalJobs: stat.totalJobs,
       avgTime: stat.totalJobs > 0 ? Math.round(stat.totalTime / stat.totalJobs) : 0,
       minTime: stat.minTime === Infinity ? 0 : stat.minTime,
-      maxTime: stat.maxTime,
-      recentJobs: stat.recentJobs
+      maxTime: stat.maxTime === Infinity ? 0 : stat.maxTime,
+      recentJobs: stat.recentJobs.slice().sort(sortByCompletedDesc),
+      jobs: stat.jobs.slice().sort(sortByCompletedDesc)
     }));
     
     // Format service type performance
     const serviceTypes = Object.entries(serviceTypeStats).map(([type, stat]) => ({
       name: type,
-      jobs: stat.jobs,
-      avgTime: stat.jobs > 0 ? Math.round(stat.totalTime / stat.jobs) : 0,
+      jobCount: stat.jobCount,
+      avgTime: stat.jobCount > 0 ? Math.round(stat.totalTime / stat.jobCount) : 0,
       minTime: stat.minTime === Infinity ? 0 : stat.minTime,
-      maxTime: stat.maxTime
+      maxTime: stat.maxTime === Infinity ? 0 : stat.maxTime,
+      jobs: stat.jobs.slice().sort(sortByCompletedDesc)
     }));
     
     // Calculate daily trends (last 30 days)
@@ -338,7 +596,7 @@ router.get('/reports', async (req, res) => {
       dailyTrends
     });
   } catch (error) {
-    console.error('Reports error:', error);
+    logger.error('Reports error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -405,7 +663,7 @@ router.post('/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -461,15 +719,15 @@ router.post('/seed-users', async (req, res) => {
         ...rest,
         username: username ? username.toLowerCase() : undefined
       });
-      if (seedPin) user.pin = seedPin;
-      if (password) user.password = password;
+  if (seedPin) { user.pin = seedPin; }
+  if (password) { user.password = password; }
       await user.save();
     }
 
     const newCount = await V2User.countDocuments();
     res.json({ seeded: true, count: newCount });
   } catch (error) {
-    console.error('Seed users error:', error);
+    logger.error('Seed users error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -478,10 +736,17 @@ router.use(authenticateToken);
 
 // Diagnostic endpoints (secured)
 router.get('/diag', async (req, res) => {
-  const users = await V2User.find();
+  const [users, vehicleCount, jobCount] = await Promise.all([
+    V2User.find(),
+    Vehicle.countDocuments(),
+    Job.countDocuments()
+  ]);
+
   res.json({
     message: 'V2 API active',
-    users: users.map(sanitizeUser)
+    users: users.map(sanitizeUser),
+    vehicles: vehicleCount,
+    jobs: jobCount
   });
 });
 
@@ -556,14 +821,14 @@ router.put('/users/:id', async (req, res) => {
     user.pin = pin;
   }
 
-  if (name !== undefined) user.name = name;
+  if (name !== undefined) { user.name = name; }
   if (employeeNumber !== undefined) {
     user.employeeNumber = employeeNumber ? String(employeeNumber).toUpperCase() : undefined;
   }
-  if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
-  if (department !== undefined) user.department = department;
-  if (role !== undefined) user.role = role;
-  if (typeof isActive === 'boolean') user.isActive = isActive;
+  if (phoneNumber !== undefined) { user.phoneNumber = phoneNumber; }
+  if (department !== undefined) { user.department = department; }
+  if (role !== undefined) { user.role = role; }
+  if (typeof isActive === 'boolean') { user.isActive = isActive; }
 
   await user.save();
   res.json(sanitizeUser(user));
@@ -576,8 +841,9 @@ router.delete('/users/:id', async (req, res) => {
 
 // Jobs
 router.get('/jobs', async (req, res) => {
-  const jobs = await Job.find().sort({ startTime: -1 });
-  res.json(jobs.map(jobToResponse));
+  const jobs = await Job.find();
+  const sortedJobs = sortJobsForDashboard(jobs);
+  res.json(sortedJobs.map(jobToResponse));
 });
 
 router.post('/jobs', async (req, res) => {
@@ -611,43 +877,54 @@ router.post('/jobs', async (req, res) => {
       ? clampExpectedDuration(matchedService.expectedMinutes)
       : clampExpectedDuration(requestedExpectedDuration);
 
+    const normalizedTechnicianId = technicianId ? String(technicianId) : 'unknown';
+    const normalizedTechnicianName = technicianName || 'Unknown Technician';
+    const sessionStart = new Date();
+
     const jobData = {
-      technicianId: technicianId || 'unknown',
-      technicianName: technicianName || 'Unknown Technician',
+      technicianId: normalizedTechnicianId,
+      technicianName: normalizedTechnicianName,
       vin: vin || 'UNKNOWN_VIN',
       stockNumber: stockNumber || '',
       vehicleDescription: vehicleDescription || 'Unknown Vehicle',
   serviceType: sanitizedServiceType,
       date: date || new Date().toISOString().split('T')[0],
       status: 'In Progress',
-      startTime: new Date(),
+      startTime: sessionStart,
       expectedDuration: resolvedExpectedDuration,
       qcRequired: false,
       salesPerson: salesPerson || '',
-      assignedTechnicianIds: assignedTechnicianIds || [technicianId || 'unknown'],
+      assignedTechnicianIds: Array.isArray(assignedTechnicianIds)
+        ? assignedTechnicianIds.map(id => String(id))
+        : [normalizedTechnicianId],
       priority: priority || 'Normal',
       year: year || '',
       make: make || '',
       model: model || '',
       vehicleColor: vehicleColor || '',
       activeTechnicians: [{
-        technicianId: technicianId || 'unknown',
-        technicianName: technicianName || 'Unknown Technician',
-        startTime: new Date()
+        technicianId: normalizedTechnicianId,
+        technicianName: normalizedTechnicianName,
+        startTime: sessionStart
+      }],
+      technicianSessions: [{
+        technicianId: normalizedTechnicianId,
+        technicianName: normalizedTechnicianName,
+        startTime: sessionStart
       }]
     };
 
     const job = await Job.create(jobData);
     res.status(201).json(jobToResponse(job));
   } catch (error) {
-    console.error('Job creation error:', error);
+    logger.error('Job creation error', { error: error.message, stack: error.stack });
     res.status(400).json({ error: error.message || 'Failed to create job' });
   }
 });
 
 router.put('/jobs/:id/complete', async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   const end = new Date();
 
   job.status = job.qcRequired ? 'QC Required' : 'Completed';
@@ -655,6 +932,7 @@ router.put('/jobs/:id/complete', async (req, res) => {
   job.endTime = end;
   job.completedAt = end;
   job.duration = computeJobDuration(job, end);
+  finalizeOpenTechnicianSessions(job, end);
   await job.save();
   res.json(jobToResponse(job));
 });
@@ -662,7 +940,7 @@ router.put('/jobs/:id/complete', async (req, res) => {
 async function handlePauseJob(req, res) {
   const { reason } = req.body;
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'Paused';
   job.pausedAt = new Date();
@@ -678,7 +956,7 @@ router.post('/jobs/:id/pause', handlePauseJob);
 // Resume job
 router.put('/jobs/:id/resume', async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'In Progress';
   job.resumedAt = new Date();
@@ -687,23 +965,49 @@ router.put('/jobs/:id/resume', async (req, res) => {
 });
 
 async function handleAddTechnician(req, res) {
-  const { technicianId } = req.body;
+  const { technicianId, startTime } = req.body || {};
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
-  
-  const technician = await V2User.findById(technicianId);
-  if (!technician) return res.status(404).json({ error: 'Technician not found' });
-  
-  if (!job.assignedTechnicianIds.includes(technicianId)) {
-    job.assignedTechnicianIds.push(technicianId);
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
+
+  if (!technicianId) {
+    return res.status(400).json({ error: 'technicianId required' });
   }
-  
-  job.activeTechnicians.push({
-    technicianId,
-    technicianName: technician.name,
-    startTime: new Date()
-  });
-  
+
+  let technician = null;
+  if (mongoose.Types.ObjectId.isValid(technicianId)) {
+    technician = await V2User.findById(technicianId);
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ pin: technicianId });
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ employeeNumber: String(technicianId).toUpperCase() });
+  }
+  if (!technician) {
+    return res.status(404).json({ error: 'Technician not found' });
+  }
+
+  const sessionStart = safeDate(startTime) || new Date();
+  startTechnicianSession(job, technician.id, technician.name, sessionStart);
+  await job.save();
+  res.json(jobToResponse(job));
+}
+
+async function handleRemoveTechnician(req, res) {
+  const technicianId = req.body?.technicianId || req.params?.technicianId;
+  const job = await Job.findById(req.params.id);
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
+
+  if (!technicianId) {
+    return res.status(400).json({ error: 'technicianId required' });
+  }
+
+  const sessionEnd = safeDate(req.body?.endTime) || new Date();
+  const removed = stopTechnicianSession(job, technicianId, sessionEnd);
+  if (!removed) {
+    return res.status(404).json({ error: 'Active technician session not found' });
+  }
+
   await job.save();
   res.json(jobToResponse(job));
 }
@@ -711,6 +1015,9 @@ async function handleAddTechnician(req, res) {
 // Add technician to job
 router.put('/jobs/:id/add-technician', handleAddTechnician);
 router.post('/jobs/:id/add-technician', handleAddTechnician);
+router.post('/jobs/:id/remove-technician', handleRemoveTechnician);
+router.delete('/jobs/:id/technicians/:technicianId', handleRemoveTechnician);
+router.post('/jobs/:id/technicians/:technicianId/end', handleRemoveTechnician);
 
 router.put('/jobs/:id/status', async (req, res) => {
   const { status, qcNotes, pauseReason } = req.body || {};
@@ -770,6 +1077,7 @@ router.put('/jobs/:id/status', async (req, res) => {
       job.endTime = job.endTime || now;
       job.completedAt = job.completedAt || now;
       job.duration = computeJobDuration(job, job.endTime);
+      finalizeOpenTechnicianSessions(job, job.endTime);
       break;
     case 'Completed':
       job.status = 'Completed';
@@ -777,6 +1085,7 @@ router.put('/jobs/:id/status', async (req, res) => {
       job.endTime = now;
       job.completedAt = now;
       job.duration = computeJobDuration(job, now);
+      finalizeOpenTechnicianSessions(job, now);
       break;
     case 'QC Approved':
       job.status = 'QC Approved';
@@ -784,12 +1093,14 @@ router.put('/jobs/:id/status', async (req, res) => {
       job.endTime = now;
       job.completedAt = now;
       job.duration = computeJobDuration(job, now);
+      finalizeOpenTechnicianSessions(job, now);
       break;
     case 'Cancelled':
       job.status = 'Cancelled';
       job.qcRequired = false;
       job.endTime = now;
       job.completedAt = now;
+      finalizeOpenTechnicianSessions(job, now);
       break;
     default:
       break;
@@ -805,7 +1116,7 @@ router.put('/jobs/:id/status', async (req, res) => {
 
 async function handleQcCompletion(req, res) {
   try {
-    const { employeeNumber, qcNotes, qcPassed, qcCheckerId } = req.body || {};
+    const { employeeNumber, qcNotes, qcPassed, qcCheckerId, qcPin, qcRating, qcFeedback } = req.body || {};
     const job = await Job.findById(req.params.id);
     if (!job) {
       return res.status(404).json({ error: 'Not found' });
@@ -823,9 +1134,22 @@ async function handleQcCompletion(req, res) {
     if (!qcUser && req.user?.sub) {
       qcUser = await V2User.findById(req.user.sub);
     }
+    if (!qcUser && qcPin) {
+      const candidates = await V2User.find({ pinHash: { $exists: true, $ne: null }, isActive: true });
+      for (const candidate of candidates) {
+        if (await candidate.verifyPin(String(qcPin).trim())) {
+          qcUser = candidate;
+          break;
+        }
+      }
+    }
 
     if (!qcUser || !['salesperson', 'manager'].includes(qcUser.role)) {
       return res.status(403).json({ error: 'Only salespeople or managers can complete QC' });
+    }
+
+    if (qcPin && !(await qcUser.verifyPin(String(qcPin).trim()))) {
+      return res.status(401).json({ error: 'Invalid QC PIN' });
     }
 
     const approved = qcPassed !== false;
@@ -852,11 +1176,21 @@ async function handleQcCompletion(req, res) {
     job.qcCompletedAt = now;
     job.qcNotes = qcNotes || '';
     job.qcEmployeeNumber = qcUser.employeeNumber;
+    job.qcCompletedById = qcUser._id;
+    if (qcRating !== undefined) {
+      const ratingValue = Number(qcRating);
+      if (!Number.isNaN(ratingValue)) {
+        job.qcRating = Math.min(5, Math.max(1, Math.round(ratingValue)));
+      }
+    }
+    if (qcFeedback !== undefined) {
+      job.qcFeedback = String(qcFeedback).trim();
+    }
 
     await job.save();
     res.json(jobToResponse(job));
   } catch (error) {
-    console.error('QC completion error:', error);
+    logger.error('QC completion error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 }
@@ -886,7 +1220,7 @@ async function handleSendMessage(req, res) {
   
   // In a real implementation, integrate with SMS service like Twilio
   // For now, we'll just log the message and return success
-  console.log('SMS would be sent:', {
+  logger.info('SMS would be sent', {
     message,
     recipients: recipients.map(r => ({ name: r.name, phone: r.phoneNumber })),
     jobId: job._id,
@@ -945,17 +1279,40 @@ router.put('/jobs/:id/start', async (req, res) => {
 });
 
 router.put('/jobs/:id/stop', async (req, res) => {
-  // Treat stop as a no-op for now (could add pause later)
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
+  const { technicianId, userId, endTime } = req.body || {};
+  const targetId = technicianId || userId;
+  if (targetId) {
+    stopTechnicianSession(job, targetId, safeDate(endTime) || new Date());
+  }
+  await job.save();
   res.json(jobToResponse(job));
 });
 
 router.put('/jobs/:id/join', async (req, res) => {
-  const { userId } = req.body || {};
+  const { userId, startTime } = req.body || {};
   const job = await Job.findById(req.params.id);
   if (!job) return res.status(404).json({ error: 'Not found' });
-  if (userId && !job.assignedTechnicianIds.includes(userId)) job.assignedTechnicianIds.push(userId);
+  if (!userId) {
+    return res.status(400).json({ error: 'userId required' });
+  }
+
+  let technician = null;
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    technician = await V2User.findById(userId);
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ pin: userId });
+  }
+  if (!technician) {
+    technician = await V2User.findOne({ employeeNumber: String(userId).toUpperCase() });
+  }
+  if (!technician) {
+    return res.status(404).json({ error: 'Technician not found' });
+  }
+
+  startTechnicianSession(job, technician.id, technician.name, safeDate(startTime) || new Date());
   await job.save();
   res.json(jobToResponse(job));
 });
@@ -1023,7 +1380,7 @@ router.get('/vehicles', async (req, res) => {
 
     res.json({ success: true, vehicles, total, page: pageNum, limit: perPage });
   } catch (e) {
-    console.error('List vehicles failed:', e);
+    logger.error('List vehicles failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -1071,7 +1428,7 @@ router.put('/vehicles/:idOrVin', async (req, res) => {
 
     res.json({ success: true, vehicle });
   } catch (error) {
-    console.error('Update vehicle failed:', error);
+    logger.error('Update vehicle failed', { error: error.message, stack: error.stack });
     res.status(400).json({ success: false, error: error.message });
   }
 });
@@ -1155,7 +1512,7 @@ router.post('/vehicles/refresh', async (req, res) => {
       total
     });
   } catch (e) {
-    console.error('Refresh inventory failed:', e);
+    logger.error('Refresh inventory failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, message: e.message, source: getInventoryCsvUrl() });
   }
 });

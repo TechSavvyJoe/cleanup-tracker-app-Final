@@ -7,6 +7,7 @@ const Vehicle = require('../models/Vehicle');
 const axios = require('axios');
 const csv = require('csv-parser');
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 const settingsStore = require('../utils/settingsStore');
 const {
   getInventoryCsvUrl,
@@ -41,7 +42,7 @@ function escapeRegex(str) {
 }
 
 function sanitizeUser(userDoc) {
-  if (!userDoc) return null;
+  if (!userDoc) { return null; }
   const user = userDoc.toObject({ virtuals: true });
   delete user.pinHash;
   delete user.passwordHash;
@@ -54,7 +55,7 @@ function sanitizeUser(userDoc) {
 }
 
 async function findUserByCredential(identifier) {
-  if (!identifier) return null;
+  if (!identifier) { return null; }
   const normalizedEmployee = String(identifier).toUpperCase();
   const normalizedUsername = String(identifier).toLowerCase();
   return V2User.findOne({
@@ -67,7 +68,7 @@ async function findUserByCredential(identifier) {
 }
 
 async function findUserByPin(pin) {
-  if (!pin) return null;
+  if (!pin) { return null; }
   const candidates = await V2User.find({
     pinHash: { $exists: true, $ne: null },
     isActive: { $ne: false }
@@ -81,7 +82,7 @@ async function findUserByPin(pin) {
 }
 
 async function isPinInUse(pin, excludeId) {
-  if (!pin) return false;
+  if (!pin) { return false; }
   const query = {
     pinHash: { $exists: true, $ne: null }
   };
@@ -125,7 +126,7 @@ function authenticateToken(req, res, next) {
 }
 
 function jobToResponse(jobDoc) {
-  if (!jobDoc) return null;
+  if (!jobDoc) { return null; }
   const job = jobDoc.toObject({ virtuals: true });
   job.id = String(job._id);
   delete job._id;
@@ -186,7 +187,7 @@ router.post('/jobs/populate-vehicle-details', async (req, res) => {
           job.make = vehicle.make || '';
           job.model = vehicle.model || '';
           job.vehicleColor = vehicle.color || '';
-          if (!job.salesPerson) job.salesPerson = '';
+          if (!job.salesPerson) { job.salesPerson = ''; }
           if (!job.priority) job.priority = 'Normal';
           await job.save();
           updated++;
@@ -212,8 +213,8 @@ router.get('/reports', async (req, res) => {
     let dateFilter = {};
     if (startDate || endDate) {
       dateFilter.date = {};
-      if (startDate) dateFilter.date.$gte = startDate;
-      if (endDate) dateFilter.date.$lte = endDate;
+  if (startDate) { dateFilter.date.$gte = startDate; }
+  if (endDate) { dateFilter.date.$lte = endDate; }
     }
     
     // Get all jobs for the period
@@ -338,7 +339,7 @@ router.get('/reports', async (req, res) => {
       dailyTrends
     });
   } catch (error) {
-    console.error('Reports error:', error);
+    logger.error('Reports error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -405,7 +406,7 @@ router.post('/auth/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -461,15 +462,15 @@ router.post('/seed-users', async (req, res) => {
         ...rest,
         username: username ? username.toLowerCase() : undefined
       });
-      if (seedPin) user.pin = seedPin;
-      if (password) user.password = password;
+  if (seedPin) { user.pin = seedPin; }
+  if (password) { user.password = password; }
       await user.save();
     }
 
     const newCount = await V2User.countDocuments();
     res.json({ seeded: true, count: newCount });
   } catch (error) {
-    console.error('Seed users error:', error);
+    logger.error('Seed users error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 });
@@ -478,10 +479,17 @@ router.use(authenticateToken);
 
 // Diagnostic endpoints (secured)
 router.get('/diag', async (req, res) => {
-  const users = await V2User.find();
+  const [users, vehicleCount, jobCount] = await Promise.all([
+    V2User.find(),
+    Vehicle.countDocuments(),
+    Job.countDocuments()
+  ]);
+
   res.json({
     message: 'V2 API active',
-    users: users.map(sanitizeUser)
+    users: users.map(sanitizeUser),
+    vehicles: vehicleCount,
+    jobs: jobCount
   });
 });
 
@@ -556,14 +564,14 @@ router.put('/users/:id', async (req, res) => {
     user.pin = pin;
   }
 
-  if (name !== undefined) user.name = name;
+  if (name !== undefined) { user.name = name; }
   if (employeeNumber !== undefined) {
     user.employeeNumber = employeeNumber ? String(employeeNumber).toUpperCase() : undefined;
   }
-  if (phoneNumber !== undefined) user.phoneNumber = phoneNumber;
-  if (department !== undefined) user.department = department;
-  if (role !== undefined) user.role = role;
-  if (typeof isActive === 'boolean') user.isActive = isActive;
+  if (phoneNumber !== undefined) { user.phoneNumber = phoneNumber; }
+  if (department !== undefined) { user.department = department; }
+  if (role !== undefined) { user.role = role; }
+  if (typeof isActive === 'boolean') { user.isActive = isActive; }
 
   await user.save();
   res.json(sanitizeUser(user));
@@ -640,14 +648,14 @@ router.post('/jobs', async (req, res) => {
     const job = await Job.create(jobData);
     res.status(201).json(jobToResponse(job));
   } catch (error) {
-    console.error('Job creation error:', error);
+    logger.error('Job creation error', { error: error.message, stack: error.stack });
     res.status(400).json({ error: error.message || 'Failed to create job' });
   }
 });
 
 router.put('/jobs/:id/complete', async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   const end = new Date();
 
   job.status = job.qcRequired ? 'QC Required' : 'Completed';
@@ -662,7 +670,7 @@ router.put('/jobs/:id/complete', async (req, res) => {
 async function handlePauseJob(req, res) {
   const { reason } = req.body;
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'Paused';
   job.pausedAt = new Date();
@@ -678,7 +686,7 @@ router.post('/jobs/:id/pause', handlePauseJob);
 // Resume job
 router.put('/jobs/:id/resume', async (req, res) => {
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   job.status = 'In Progress';
   job.resumedAt = new Date();
@@ -689,10 +697,10 @@ router.put('/jobs/:id/resume', async (req, res) => {
 async function handleAddTechnician(req, res) {
   const { technicianId } = req.body;
   const job = await Job.findById(req.params.id);
-  if (!job) return res.status(404).json({ error: 'Not found' });
+  if (!job) { return res.status(404).json({ error: 'Not found' }); }
   
   const technician = await V2User.findById(technicianId);
-  if (!technician) return res.status(404).json({ error: 'Technician not found' });
+  if (!technician) { return res.status(404).json({ error: 'Technician not found' }); }
   
   if (!job.assignedTechnicianIds.includes(technicianId)) {
     job.assignedTechnicianIds.push(technicianId);
@@ -856,7 +864,7 @@ async function handleQcCompletion(req, res) {
     await job.save();
     res.json(jobToResponse(job));
   } catch (error) {
-    console.error('QC completion error:', error);
+    logger.error('QC completion error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: error.message });
   }
 }
@@ -886,7 +894,7 @@ async function handleSendMessage(req, res) {
   
   // In a real implementation, integrate with SMS service like Twilio
   // For now, we'll just log the message and return success
-  console.log('SMS would be sent:', {
+  logger.info('SMS would be sent', {
     message,
     recipients: recipients.map(r => ({ name: r.name, phone: r.phoneNumber })),
     jobId: job._id,
@@ -1023,7 +1031,7 @@ router.get('/vehicles', async (req, res) => {
 
     res.json({ success: true, vehicles, total, page: pageNum, limit: perPage });
   } catch (e) {
-    console.error('List vehicles failed:', e);
+    logger.error('List vehicles failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, error: e.message });
   }
 });
@@ -1071,7 +1079,7 @@ router.put('/vehicles/:idOrVin', async (req, res) => {
 
     res.json({ success: true, vehicle });
   } catch (error) {
-    console.error('Update vehicle failed:', error);
+    logger.error('Update vehicle failed', { error: error.message, stack: error.stack });
     res.status(400).json({ success: false, error: error.message });
   }
 });
@@ -1155,7 +1163,7 @@ router.post('/vehicles/refresh', async (req, res) => {
       total
     });
   } catch (e) {
-    console.error('Refresh inventory failed:', e);
+    logger.error('Refresh inventory failed', { error: e.message, stack: e.stack });
     res.status(500).json({ success: false, message: e.message, source: getInventoryCsvUrl() });
   }
 });

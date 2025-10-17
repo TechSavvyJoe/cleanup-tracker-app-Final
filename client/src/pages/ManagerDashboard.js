@@ -14,7 +14,7 @@ const ManagerDashboard = () => {
         axios
             .get('/api/v2/jobs', { params: filters })
             .then((res) => setCleanups(res.data))
-            .catch((err) => console.log(err));
+            .catch((err) => console.error('Failed to fetch cleanups:', err));
     }, [filters]);
 
     useEffect(() => {

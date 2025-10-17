@@ -150,11 +150,6 @@ export function useAuth() {
 
     setSessionTokens(sessionData.tokens);
     persistSession(sessionData);
-    console.log('User login successful:', {
-      userId: sessionData.user?.id,
-      role: sessionData.user?.role,
-      name: sessionData.user?.name
-    });
     setUser(sessionData.user);
     setError(null);
     return true;
@@ -162,7 +157,6 @@ export function useAuth() {
 
   // Logout handler
   const logout = useCallback((message) => {
-    console.log('User logout');
     clearSessionTokens();
     persistSession(null);
     setUser(null);

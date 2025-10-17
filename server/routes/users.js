@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { jwtSecret } = require('../config/keys');
+const logger = require('../utils/logger');
 
 // Input validation helper
 function validateInput(username, password) {
@@ -68,7 +69,7 @@ router.post('/register', async (req, res) => {
             role: savedUser.role
         });
     } catch (error) {
-        console.error('Registration error:', error);
+        logger.error('Registration error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: 'Server error during registration' });
     }
 });
@@ -122,7 +123,7 @@ router.post('/login', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Login error:', error);
+        logger.error('Login error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: 'Server error during login' });
     }
 });

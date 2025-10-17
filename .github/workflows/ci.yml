@@ -1,0 +1,110 @@
+name: CI - tests + diagnostics
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install server & client dependencies
+        run: |
+          npm ci --prefix server
+          npm ci --prefix client
+
+      - name: Lint client
+        run: |
+          # Fail the job on any lint warnings/errors
+          npm --prefix client run lint
+
+      - name: Build client (verify production build)
+        run: |
+          npm --prefix client run build
+
+      - name: Run npm audit (server + client)
+        run: |
+          npm --prefix server audit --audit-level=moderate || true
+          npm --prefix client audit --audit-level=moderate || true
+
+      - name: Run client unit tests
+        env:
+          CI: true
+        run: |
+          # Run tests in non-watch mode; surface failures to the job
+          npm --prefix client test -- --watchAll=false --silent
+
+      - name: Start server in background
+        run: |
+          export PORT=5051
+          export NODE_ENV=test
+          # Start server in background and persist PID so we can stop it later
+          npm --prefix server start &> server.log &
+          echo $! > server.pid
+
+      - name: Wait for server /api/health
+        run: |
+          set -e
+          for i in {1..30}; do
+            if curl -sSf http://localhost:5051/api/health >/dev/null 2>&1; then
+              echo "Server is healthy"
+              break
+            fi
+            echo "Waiting for server... ($i)"
+            sleep 1
+          done
+
+      - name: CI login to obtain access token
+        id: login
+        env:
+          # Read the test PIN from repository secrets. Set TEST_USER_PIN in repo settings.
+          TEST_USER_PIN: ${{ secrets.TEST_USER_PIN }}
+        run: |
+          # Use seeded test credentials (from secrets) to get an access token for diag endpoint
+          if [ -z "$TEST_USER_PIN" ]; then
+            echo "ERROR: TEST_USER_PIN secret is not set. Set it in repository Secrets > Actions."
+            exit 2
+          fi
+          resp=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d "{\"pin\":\"$TEST_USER_PIN\"}" http://localhost:5051/api/v2/auth/login || true)
+          echo "login response: $resp"
+          token=$(echo "$resp" | node -e "let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(s);if(j.tokens&&j.tokens.accessToken)console.log(j.tokens.accessToken);}catch(e){} })")
+          if [ -z "$token" ]; then
+            echo "Failed to obtain access token from login response"
+            echo "$resp"
+            exit 2
+          fi
+          echo "Obtained token (truncated): ${token:0:8}..."
+          echo "DIAG_TOKEN=$token" >> $GITHUB_ENV
+
+      - name: Validate /api/v2/diag payload (node)
+        run: |
+          # Use the repo's Node helper for validation. DIAG_TOKEN is set from previous step.
+          node scripts/diag-check.js http://localhost:5051 "$DIAG_TOKEN" || (echo "Diag check failed" && exit 2)
+
+      - name: Dump server log (for debugging)
+        if: failure()
+        run: |
+          echo "--- server.log ---"
+          tail -n +1 server.log || true
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" || true
+            rm -f server.pid
+          fi
+          sleep 1

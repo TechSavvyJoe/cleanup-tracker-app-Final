@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react';
+import PropTypes from 'prop-types';
 import { V2 } from '../../utils/v2Client';
 import { useToast } from '../../components/Toast';
 
@@ -114,10 +115,11 @@ const getJobTimestamp = (job) => {
   return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
 };
 
-function SalespersonDashboard({ user, jobs }) {
+function SalespersonDashboard({ user, jobs, onRefresh }) {
   const toast = useToast();
   const [statusFilter, setStatusFilter] = useState('all');
   const [pendingAction, setPendingAction] = useState({ jobId: null, type: null });
+  const [qcDialog, setQcDialog] = useState(null);
 
   const myJobs = useMemo(() => {
     if (!Array.isArray(jobs) || !user) return [];
@@ -232,8 +234,9 @@ function SalespersonDashboard({ user, jobs }) {
     }
   ]), [metrics]);
 
-  const handleQualityCheck = useCallback(async (jobId, passed) => {
-    if (!jobId) {
+  const launchQualityDialog = useCallback((job, passed) => {
+    const resolvedJobId = job?.id || job?._id || job?.jobId;
+    if (!resolvedJobId) {
       toast.error('Unable to update job without an ID');
       return;
     }
@@ -242,23 +245,52 @@ function SalespersonDashboard({ user, jobs }) {
       return;
     }
 
-    setPendingAction({ jobId, type: 'qc' });
+    setQcDialog({
+      open: true,
+      jobId: resolvedJobId,
+      job,
+      passed,
+      rating: passed ? 5 : 2,
+      notes: passed ? 'Vehicle delivered to customer.' : '',
+      pin: ''
+    });
+  }, [toast, user]);
+
+  const submitQualityCheck = useCallback(async () => {
+    if (!qcDialog?.jobId) return;
+    if (!qcDialog.pin || qcDialog.pin.trim().length < 4) {
+      toast.error('Enter your QC PIN to confirm.');
+      return;
+    }
+    if (qcDialog.rating < 1 || qcDialog.rating > 5) {
+      toast.error('Select a star rating between 1 and 5.');
+      return;
+    }
+
+    setPendingAction({ jobId: qcDialog.jobId, type: 'qc' });
 
     try {
-      await V2.post(`/jobs/${jobId}/qc`, {
+      await V2.post(`/jobs/${qcDialog.jobId}/qc`, {
+        qcPassed: qcDialog.passed,
+        qcNotes: qcDialog.notes || (qcDialog.passed ? 'Quality check completed.' : 'QC failed – please review.'),
+        qcFeedback: qcDialog.notes,
+        qcRating: qcDialog.rating,
+        qcPin: qcDialog.pin,
         qcCheckerId: user.employeeId || user.id,
-        qcCheckerName: user.name,
-        qcPassed: passed,
-        qcNotes: passed ? 'Quality check passed' : 'Quality check failed - needs attention'
+        qcCheckerName: user.name
       });
-      toast.success(`QC ${passed ? 'approval recorded' : 'issue flagged'} successfully`);
+      toast.success(`QC ${qcDialog.passed ? 'approval recorded' : 'follow-up logged'}`);
+      setQcDialog(null);
+      if (typeof onRefresh === 'function') {
+        onRefresh();
+      }
     } catch (err) {
       console.error('QC update failed:', err);
       toast.error('QC update failed: ' + (err.response?.data?.error || err.message));
     } finally {
       setPendingAction({ jobId: null, type: null });
     }
-  }, [toast, user]);
+  }, [qcDialog, toast, user, onRefresh]);
 
   const handleMessage = useCallback(async (jobId, recipientType) => {
     if (!jobId) {
@@ -385,7 +417,8 @@ function SalespersonDashboard({ user, jobs }) {
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div>
                           <h3 className="text-lg font-semibold text-white sm:text-xl">
-                            {job.year} {job.make} {job.model} {job.vehicleColor && `• ${job.vehicleColor}`}
+                            {job.vehicleSummary || job.vehicle?.summary || [job.year, job.make, job.model].filter(Boolean).join(' ') || 'Vehicle'}
+                            {job.vehicle?.color || job.vehicleColor ? ` • ${job.vehicle?.color || job.vehicleColor}` : ''}
                           </h3>
                           <p className="mt-1 text-sm text-[color:var(--x-text-secondary)]">{job.stockNumber ? `Stock ${job.stockNumber}` : 'Stock pending'} • {job.vin ? `VIN • ${job.vin.slice(-6)}` : 'VIN unavailable'}</p>
                         </div>
@@ -428,6 +461,11 @@ function SalespersonDashboard({ user, jobs }) {
                             QC Complete
                           </span>
                         )}
+                        {job.qcRating && (
+                          <span className="inline-flex items-center gap-2 rounded-full border border-[rgba(255,215,0,0.35)] bg-[rgba(255,215,0,0.12)] px-3 py-1 text-xs font-semibold text-yellow-300">
+                            {'★'.repeat(job.qcRating)}{'☆'.repeat(5 - job.qcRating)}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -436,7 +474,7 @@ function SalespersonDashboard({ user, jobs }) {
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => handleQualityCheck(resolvedJobId, true)}
+                            onClick={() => launchQualityDialog(job, true)}
                             disabled={isQcPending}
                             className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                               isQcPending
@@ -448,7 +486,7 @@ function SalespersonDashboard({ user, jobs }) {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleQualityCheck(resolvedJobId, false)}
+                            onClick={() => launchQualityDialog(job, false)}
                             disabled={isQcPending}
                             className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                               isQcPending
@@ -493,8 +531,102 @@ function SalespersonDashboard({ user, jobs }) {
           </div>
         </section>
       </div>
+
+      {qcDialog?.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-md rounded-3xl border border-[color:var(--x-border)] bg-[color:var(--x-surface)] p-6 shadow-[0_35px_85px_rgba(0,0,0,0.7)]">
+            <div className="mb-4">
+              <h3 className="text-xl font-semibold text-white">Quality Check</h3>
+              <p className="mt-1 text-sm text-[color:var(--x-text-secondary)]">
+                Rate the detail and confirm with your QC PIN.
+              </p>
+            </div>
+
+            <div className="mb-5 space-y-1">
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">Vehicle</p>
+              <p className="text-sm text-white">{qcDialog.job?.vehicleSummary || qcDialog.job?.vehicle?.summary || qcDialog.job?.vehicleDescription || qcDialog.job?.vin}</p>
+              <p className="text-xs text-[color:var(--x-text-secondary)]">VIN {qcDialog.job?.vin || 'TBD'}</p>
+            </div>
+
+            <div className="mb-5">
+              <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">Rating</p>
+              <div className="mt-2 flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setQcDialog((prev) => ({ ...prev, rating: star }))}
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
+                      qcDialog.rating >= star
+                        ? 'border-[rgba(255,215,0,0.6)] bg-[rgba(255,215,0,0.18)] text-yellow-300 shadow-[0_0_15px_rgba(255,215,0,0.35)]'
+                        : 'border-[color:var(--x-border)] bg-black/40 text-[color:var(--x-text-secondary)] hover:border-[rgba(255,215,0,0.4)] hover:text-yellow-200'
+                    }`}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-5">
+              <label className="text-xs uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">Notes</label>
+              <textarea
+                className="mt-2 w-full rounded-2xl border border-[color:var(--x-border)] bg-black/40 px-4 py-3 text-sm text-white outline-none transition-colors focus:border-[rgba(29,155,240,0.45)]"
+                rows={3}
+                value={qcDialog.notes}
+                onChange={(event) => setQcDialog((prev) => ({ ...prev, notes: event.target.value }))}
+                placeholder={qcDialog.passed ? 'Add a positive note (optional)' : 'Describe what needs attention'}
+              />
+            </div>
+
+            <div className="mb-6">
+              <label className="text-xs uppercase tracking-[0.18em] text-[color:var(--x-text-secondary)]">QC PIN</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                className="mt-2 w-full rounded-2xl border border-[color:var(--x-border)] bg-black/40 px-4 py-3 text-sm text-white outline-none transition-colors focus:border-[rgba(29,155,240,0.45)]"
+                value={qcDialog.pin}
+                onChange={(event) => setQcDialog((prev) => ({ ...prev, pin: event.target.value }))}
+                placeholder="Enter your QC PIN"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setQcDialog(null)}
+                className="rounded-xl border border-[color:var(--x-border)] px-4 py-2 text-sm font-semibold text-[color:var(--x-text-secondary)] hover:border-[rgba(139,152,165,0.35)] hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitQualityCheck}
+                className="rounded-xl bg-[color:var(--x-blue)] px-4 py-2 text-sm font-semibold text-black hover:bg-[color:var(--x-blue-hover)]"
+              >
+                Submit QC
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+SalespersonDashboard.propTypes = {
+  user: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    name: PropTypes.string,
+    role: PropTypes.string,
+    employeeId: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
+  }).isRequired,
+  jobs: PropTypes.arrayOf(PropTypes.object).isRequired,
+  onRefresh: PropTypes.func
+};
+
+SalespersonDashboard.defaultProps = {
+  onRefresh: undefined
+};
 
 export default SalespersonDashboard;

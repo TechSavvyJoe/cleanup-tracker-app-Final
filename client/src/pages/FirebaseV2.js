@@ -200,6 +200,66 @@ const DateUtils = {
   }
 };
 
+const buildVehicleSummary = (job = {}) => {
+  const vehicle = job.vehicle || {};
+  const year = (vehicle.year ?? job.year ?? '').toString().trim();
+  const make = (vehicle.make ?? job.make ?? '').toString().trim();
+  const model = (vehicle.model ?? job.model ?? '').toString().trim();
+  const description = (vehicle.description ?? job.vehicleDescription ?? '').trim();
+  const color = (vehicle.color ?? job.vehicleColor ?? job.color ?? '').toString().trim();
+  const stockNumber = vehicle.stockNumber ?? job.stockNumber;
+  const vin = (vehicle.vin ?? job.vin ?? '').toString().trim();
+
+  const headlineParts = [year, make, model].filter(Boolean);
+  const headline = headlineParts.join(' ');
+
+  if (headline) {
+    return color ? `${headline} • ${color}` : headline;
+  }
+
+  if (description) {
+    return color ? `${description} • ${color}` : description;
+  }
+
+  if (stockNumber) {
+    return `Stock ${stockNumber}`;
+  }
+
+  if (vin) {
+    return `VIN ${vin.slice(-6)}`;
+  }
+
+  return 'Vehicle';
+};
+
+const normalizeJobRecord = (job = {}) => {
+  const vehicle = {
+    year: job.vehicle?.year ?? job.year ?? '',
+    make: job.vehicle?.make ?? job.make ?? '',
+    model: job.vehicle?.model ?? job.model ?? '',
+    color: job.vehicle?.color ?? job.vehicleColor ?? job.color ?? '',
+    stockNumber: job.vehicle?.stockNumber ?? job.stockNumber ?? '',
+    vin: job.vehicle?.vin ?? job.vin ?? '',
+    description: job.vehicle?.description ?? job.vehicleDescription ?? ''
+  };
+
+  const vehicleSummary = job.vehicleSummary || buildVehicleSummary({ ...job, vehicle });
+  const technicianSessions = Array.isArray(job.technicianSessions) ? job.technicianSessions : [];
+  const activeTechnicians = Array.isArray(job.activeTechnicians) ? job.activeTechnicians : [];
+  const assignedTechnicianIds = Array.isArray(job.assignedTechnicianIds)
+    ? job.assignedTechnicianIds.map((value) => (value != null ? String(value) : value))
+    : [];
+
+  return {
+    ...job,
+    vehicle,
+    vehicleSummary,
+    technicianSessions,
+    activeTechnicians,
+    assignedTechnicianIds
+  };
+};
+
 // 🎨 BILLION DOLLAR TECH COMPANY LOGIN - ULTRA PREMIUM DESIGN
 function LoginForm({ onLogin }) {
   const [employeeId, setEmployeeId] = useState('');
@@ -747,6 +807,7 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
       
       // Data validation and sanitization
       const jobs = Array.isArray(jobsRes.data) ? jobsRes.data : [];
+      const normalizedJobs = jobs.map(normalizeJobRecord);
       const usersArray = Array.isArray(usersRes.data) ? usersRes.data : [];
   const settings = settingsRes.data || {
     siteTitle: 'CleanUp Tracker',
@@ -754,14 +815,15 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
   };
 
       // Performance optimization: batch state updates
-      setJobs(jobs);
+      setJobs(normalizedJobs);
       
       // Enhanced user data processing with validation
       const usersObj = {};
       usersArray.forEach(user => {
-        if (user && user.id) {
+        const userId = user?.id || user?._id;
+        if (user && userId) {
           // Sanitize user data
-          usersObj[user.id] = {
+          usersObj[String(userId)] = {
             ...user,
             name: Security.sanitizeInput(user.name || 'Unknown'),
             role: user.role || 'detailer'
@@ -787,7 +849,7 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
       const loadTime = performance.now() - startTime;
       Logger.info('Data loading completed', {
         loadTime: `${loadTime.toFixed(2)}ms`,
-        jobCount: jobs.length,
+        jobCount: normalizedJobs.length,
         userCount: usersArray.length
       });
       
@@ -1758,7 +1820,18 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
           {/* Detailer Views */}
           {(user.role === 'detailer' || user.role === 'technician') && (
             <>
-              {view === 'dashboard' && <DetailerDashboard user={user} jobs={activeJobs} completedJobs={completedJobs} userActiveJob={userActiveJob} onStopWork={handleStopWork} onOpenScanner={() => setShowScanner(true)} onGoToNewJob={() => { setView('jobs'); closeSidebar(); }} />}
+              {view === 'dashboard' && (
+                <DetailerDashboard
+                  user={user}
+                  jobs={activeJobs}
+                  completedJobs={completedJobs}
+                  userActiveJob={userActiveJob}
+                  onStopWork={handleStopWork}
+                  onRefresh={loadInitialData}
+                  onOpenScanner={() => setShowScanner(true)}
+                  onGoToNewJob={() => { setView('jobs'); closeSidebar(); }}
+                />
+              )}
               {view === 'jobs' && (
                 <DetailerNewJob
                   user={user}
@@ -1836,7 +1909,7 @@ function MainApp({ user, onLogout, onError, showCommandPalette, setShowCommandPa
           {/* Salesperson Views */}
           {user.role === 'salesperson' && (
             <>
-              {view === 'dashboard' && <SalespersonDashboard user={user} jobs={jobs} />}
+              {view === 'dashboard' && <SalespersonDashboard user={user} jobs={jobs} onRefresh={loadInitialData} />}
               {view === 'me' && <MySettingsView user={user} />}
             </>
           )}
@@ -2001,4 +2074,3 @@ export default function FirebaseV2() {
     </Suspense>
   );
 }
-

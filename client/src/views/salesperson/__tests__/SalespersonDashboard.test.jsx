@@ -86,8 +86,16 @@ describe('SalespersonDashboard', () => {
 
     await screen.findByText(/Ford Bronco/i);
 
+    // Open QC dialog for the first job and submit a passing QC.
     const passButton = screen.getByRole('button', { name: /Pass/i });
     fireEvent.click(passButton);
+
+    // The dialog requires a PIN and then a submit. Fill PIN and submit.
+    const pinInput = await screen.findByPlaceholderText(/Enter your QC PIN/i);
+    fireEvent.change(pinInput, { target: { value: '1234' } });
+
+    const submit = screen.getByRole('button', { name: /Submit QC/i });
+    fireEvent.click(submit);
 
     await waitFor(() => {
       expect(V2.post).toHaveBeenCalledWith('/jobs/job-1/qc', expect.objectContaining({

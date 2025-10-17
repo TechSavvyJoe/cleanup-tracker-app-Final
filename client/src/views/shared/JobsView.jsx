@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, memo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import PropTypes from 'prop-types';
 import { V2 } from '../../utils/v2Client';
 import { useToast } from '../../components/Toast';
@@ -28,6 +28,13 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
     detailer: '',
     status: ''
   });
+
+  const currentUserId = currentUser?.id || null;
+  const currentUserPin = currentUser?.pin || null;
+  const currentEmployeeId = currentUser?.employeeId || null;
+  const currentIdentifiers = useMemo(() => (
+    new Set([currentUserId, currentUserPin, currentEmployeeId].filter(Boolean).map((value) => String(value)))
+  ), [currentUserId, currentUserPin, currentEmployeeId]);
 
   // 🎯 Keyboard Shortcuts for Search
   useEffect(() => {
@@ -196,6 +203,88 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
     setJobDetails(null);
     setError('');
   };
+
+  const refreshJobData = useCallback(async (jobId) => {
+    try {
+      if (typeof onRefresh === 'function') {
+        await Promise.resolve(onRefresh());
+      }
+    } catch (refreshError) {
+      console.error('Job list refresh failed', refreshError);
+    }
+
+    if (!jobId) {
+      return;
+    }
+
+    const selectedId = selectedJob?.id || selectedJob?._id;
+    if (selectedId && String(selectedId) === String(jobId)) {
+      try {
+        const res = await V2.get(`/jobs/${jobId}`);
+        setJobDetails(res.data);
+      } catch (detailErr) {
+        console.error('Failed to refresh job details', detailErr);
+      }
+    }
+  }, [onRefresh, selectedJob]);
+
+  const handleJoinJob = useCallback(async (jobId) => {
+    if (!jobId) {
+      toast.error('Job ID missing');
+      return false;
+    }
+    if (!currentUserId) {
+      toast.error('You need to be signed in to join a job.');
+      return false;
+    }
+    try {
+      await V2.put(`/jobs/${jobId}/join`, { userId: currentUserId });
+      toast.success('You are now on this job.');
+      await refreshJobData(jobId);
+      return true;
+    } catch (err) {
+      toast.error('Failed to join job: ' + (err.response?.data?.error || err.message));
+      return false;
+    }
+  }, [currentUserId, refreshJobData, toast]);
+
+  const handleLeaveJob = useCallback(async (jobId, technicianId) => {
+    if (!jobId) {
+      toast.error('Job ID missing');
+      return false;
+    }
+    const identifier = technicianId || currentUserId || currentUserPin;
+    if (!identifier) {
+      toast.error('We could not determine which timer to stop.');
+      return false;
+    }
+    try {
+      await V2.post(`/jobs/${jobId}/remove-technician`, {
+        technicianId: identifier,
+        endTime: new Date().toISOString()
+      });
+      toast.success('Timer stopped.');
+      await refreshJobData(jobId);
+      return true;
+    } catch (err) {
+      toast.error('Failed to stop timer: ' + (err.response?.data?.error || err.message));
+      return false;
+    }
+  }, [currentUserId, currentUserPin, refreshJobData, toast]);
+
+  const jobDetailSessions = useMemo(() => (jobDetails?.job?.technicianSessions || []), [jobDetails]);
+  const jobDetailActiveSessions = useMemo(
+    () => jobDetailSessions.filter((session) => session && session.isActive),
+    [jobDetailSessions]
+  );
+  const jobDetailUserSession = useMemo(
+    () => jobDetailSessions.find((session) => session && currentIdentifiers.has(String(session.technicianId))) || null,
+    [jobDetailSessions, currentIdentifiers]
+  );
+  const jobDetailId = jobDetails?.job?.id || jobDetails?.job?._id || selectedJob?.id || selectedJob?._id || null;
+  const jobDetailUserActive = Boolean(jobDetailUserSession && (jobDetailUserSession.isActive || !jobDetailUserSession.endTime));
+  const jobDetailStatus = (jobDetails?.job?.status || '').toLowerCase();
+  const jobDetailIsClosed = ['completed', 'qc approved', 'cancelled'].some((status) => jobDetailStatus.includes(status));
 
   return (
     <div className="space-y-8 text-[color:var(--x-text-primary)]">
@@ -414,29 +503,43 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
             <span className="x-text-subtle text-sm">{filteredJobs.length} results</span>
           </div>
           <div className="job-list-container space-y-2">
-            {filteredJobs.length > 0 ? filteredJobs.map(job => (
+            {filteredJobs.length > 0 ? filteredJobs.map((job) => {
+              const vehicle = job.vehicle || {};
+              const vehicleSummary = job.vehicleSummary || vehicle.summary || [job.year, job.make, job.model].filter(Boolean).join(' ') || 'Vehicle';
+              const vehicleColor = vehicle.color || job.vehicleColor || job.color || '';
+              const stockNumber = vehicle.stockNumber || job.stockNumber || 'N/A';
+              const vinValue = vehicle.vin || job.vin || '';
+              const vinDisplay = vinValue ? `…${vinValue.slice(-6)}` : 'N/A';
+              const technicianSessions = Array.isArray(job.technicianSessions) ? job.technicianSessions : [];
+              const activeSessions = technicianSessions.filter((session) => session && session.isActive);
+              const userSession = technicianSessions.find((session) => session && currentIdentifiers.has(String(session.technicianId)));
+              const isUserAssigned = Boolean(userSession) || (Array.isArray(job.assignedTechnicianIds) && job.assignedTechnicianIds.some((id) => currentIdentifiers.has(String(id))));
+              return (
               <div
                 key={job.id || job._id}
-                className="job-card cursor-pointer x-fade-in"
+                className={`job-card cursor-pointer x-fade-in ${isUserAssigned ? 'border border-[color:var(--x-blue)]' : ''}`}
                 onClick={() => openDetails(job)}
               >
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="flex-1 min-w-0 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-sm font-semibold">{job.year} {job.make} {job.model}</h4>
-                      {job.vehicleColor && <span className="x-badge">{job.vehicleColor}</span>}
+                      <h4 className="text-sm font-semibold">{vehicleSummary}</h4>
+                      {vehicleColor && <span className="x-badge">{vehicleColor}</span>}
                       {job.priority && (
                         <span className={getPriorityStyles(job.priority)}>{job.priority}</span>
+                      )}
+                      {isUserAssigned && (
+                        <span className="x-badge x-badge--accent">You&apos;re assigned</span>
                       )}
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                       <div className="flex items-center gap-1">
                         <span className="x-text-subtle">Stock</span>
-                        <span>{job.stockNumber || 'N/A'}</span>
+                        <span>{stockNumber}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <span className="x-text-subtle">VIN</span>
-                        <span className="font-mono">{job.vin?.slice(-8) || 'N/A'}</span>
+                        <span className="font-mono">{vinDisplay}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <span className="x-text-subtle">Service</span>
@@ -444,7 +547,7 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                       </div>
                       <div className="flex items-center gap-1">
                         <span className="x-text-subtle">Detailer</span>
-                        <span>{job.technicianName || job.assignedTo || 'N/A'}</span>
+                        <span>{job.technicianName || job.assignedTo || activeSessions[0]?.technicianName || 'N/A'}</span>
                       </div>
                       {job.salesPerson && (
                         <div className="flex items-center gap-1">
@@ -453,6 +556,25 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                         </div>
                       )}
                     </div>
+                    {activeSessions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="x-text-subtle uppercase tracking-[0.12em]">Active Techs</span>
+                        <div className="flex flex-wrap gap-1">
+                          {activeSessions.map((session, index) => (
+                            <span
+                              key={`${session.technicianId || 'tech'}-${index}`}
+                              className={`px-2 py-0.5 rounded-full border text-[11px] ${
+                                currentIdentifiers.has(String(session.technicianId))
+                                  ? 'border-amber-400 text-amber-200 bg-amber-500/10'
+                                  : 'border-gray-700 text-gray-300 bg-gray-900'
+                              }`}
+                            >
+                              {session.technicianName || 'Teammate'}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                       {(job.startTime || job.startedAt) ? (
                         <div className="flex items-center gap-1">
@@ -502,7 +624,8 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                   </div>
                 </div>
               </div>
-            )) : (
+            );
+            }) : (
               <div className="x-banner x-fade-in text-center space-y-3">
                 <p>No jobs found matching your filters.</p>
                 <button type="button" onClick={clearFilters} className="x-button x-button--secondary">Clear Filters</button>
@@ -535,12 +658,14 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                     onClick={() => openDetails(job)}
                   >
                     <td className="py-2 px-3 font-medium text-[color:var(--x-text-primary)]">
-                      {job.year} {job.make} {job.model}
+                      {job.vehicleSummary || job.vehicle?.summary || [job.year, job.make, job.model].filter(Boolean).join(' ') || 'Vehicle'}
                     </td>
-                    <td className="py-2 px-3 x-text-subtle">{job.stockNumber || 'N/A'}</td>
-                    <td className="py-2 px-3 font-mono x-text-subtle">{job.vin?.slice(-8) || 'N/A'}</td>
+                    <td className="py-2 px-3 x-text-subtle">{job.vehicle?.stockNumber || job.stockNumber || 'N/A'}</td>
+                    <td className="py-2 px-3 font-mono x-text-subtle">{(job.vehicle?.vin || job.vin || '').slice(-6) || 'N/A'}</td>
                     <td className="py-2 px-3 text-[color:var(--x-blue)]">{job.serviceType || 'N/A'}</td>
-                    <td className="py-2 px-3 x-text-subtle">{job.technicianName || job.assignedTo || 'N/A'}</td>
+                    <td className="py-2 px-3 x-text-subtle">
+                      {job.technicianName || job.assignedTo || (Array.isArray(job.technicianSessions) && job.technicianSessions.find(session => session && session.isActive)?.technicianName) || 'N/A'}
+                    </td>
                     <td className="py-2 px-3">
                       <span className={getStatusStyles(job.status)}>
                         {job.status === 'in_progress' ? 'In Progress' : job.status === 'completed' ? 'Completed' : job.status || 'Pending'}
@@ -571,11 +696,11 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
             <div className="flex justify-between items-start mb-3">
               <div>
                 <h4 className="text-lg font-semibold text-[color:var(--x-text-primary)]">
-                  {selectedJob.year} {selectedJob.make} {selectedJob.model}
+                  {selectedJob.vehicleSummary || selectedJob.vehicle?.summary || [selectedJob.year, selectedJob.make, selectedJob.model].filter(Boolean).join(' ') || 'Vehicle'}
                 </h4>
-                {selectedJob.vehicleColor && (
+                {(selectedJob.vehicle?.color || selectedJob.vehicleColor) && (
                   <span className="x-badge mt-1">
-                    {selectedJob.vehicleColor}
+                    {selectedJob.vehicle?.color || selectedJob.vehicleColor}
                   </span>
                 )}
               </div>
@@ -693,6 +818,26 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                         </div>
                       )}
 
+                      {jobDetailActiveSessions.length > 0 && (
+                        <div>
+                          <p className="x-text-subtle mb-1">Currently Active</p>
+                          <div className="flex flex-wrap gap-1">
+                            {jobDetailActiveSessions.map((session, index) => (
+                              <span
+                                key={`${session.technicianId || 'tech'}-${index}`}
+                                className={`px-2 py-0.5 rounded-full border text-[11px] ${
+                                  currentIdentifiers.has(String(session.technicianId))
+                                    ? 'border-amber-400 text-amber-200 bg-amber-500/10'
+                                    : 'border-gray-700 text-gray-300 bg-gray-900'
+                                }`}
+                              >
+                                {session.technicianName || 'Teammate'}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {(jobDetails.events || []).length > 0 && (
                         <div className="mt-2">
                           <p className="x-text-subtle mb-1">Recent Events</p>
@@ -715,20 +860,40 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                 </div>
 
                 {/* Compact Action Buttons */}
-                {jobDetails.job?.status !== 'completed' && (
+                {!jobDetailIsClosed && (
                   <div className="flex flex-wrap gap-2">
+                    {jobDetailId && currentUserId && !jobDetailUserActive && (
+                      <button
+                        onClick={() => handleJoinJob(jobDetailId)}
+                        className="x-button x-button--secondary text-sm"
+                      >
+                        Join Job
+                      </button>
+                    )}
+                    {jobDetailId && jobDetailUserActive && (
+                      <button
+                        onClick={() => handleLeaveJob(jobDetailId, jobDetailUserSession?.technicianId)}
+                        className="x-button x-button--danger text-sm"
+                      >
+                        Stop My Timer
+                      </button>
+                    )}
                     <button
                       onClick={async () => {
+                        if (!jobDetailId) {
+                          toast.error('Job ID not found');
+                          return;
+                        }
                         try {
-                          const jobId = jobDetails.job?.id || selectedJob?.id || selectedJob?._id;
-                          if (!jobId) {
-                            toast.error('Job ID not found');
-                            return;
+                          if (!jobDetailUserSession) {
+                            const joined = await handleJoinJob(jobDetailId);
+                            if (!joined) {
+                              return;
+                            }
                           }
-                          await V2.put(`/jobs/${jobId}/start`, { userId: currentUser?.id });
-                          await onRefresh?.();
-                          closeDetails();
+                          await V2.put(`/jobs/${jobDetailId}/start`, { userId: currentUserId });
                           toast.success('Timer started successfully');
+                          await refreshJobData(jobDetailId);
                         } catch (e) {
                           toast.error('Start failed: ' + (e.response?.data?.error || e.message));
                         }
@@ -739,39 +904,18 @@ const JobsView = memo(function JobsView({ jobs, users, currentUser, onRefresh })
                     </button>
                     <button
                       onClick={async () => {
-                        try {
-                          const jobId = jobDetails.job?.id || selectedJob?.id || selectedJob?._id;
-                          if (!jobId) {
-                            toast.error('Job ID not found');
-                            return;
-                          }
-                          await V2.put(`/jobs/${jobId}/stop`, { userId: currentUser?.id });
-                          await onRefresh?.();
-                          closeDetails();
-                          toast.success('Timer stopped successfully');
-                        } catch (e) {
-                          toast.error('Stop failed: ' + (e.response?.data?.error || e.message));
+                        if (!jobDetailId) {
+                          toast.error('Job ID not found');
+                          return;
                         }
-                      }}
-                      className="x-button x-button--secondary text-sm"
-                    >
-                      Stop Timer
-                    </button>
-                    <button
-                      onClick={async () => {
                         try {
-                          const jobId = jobDetails.job?.id || selectedJob?.id || selectedJob?._id;
-                          if (!jobId) {
-                            toast.error('Job ID not found');
-                            return;
-                          }
-                          await V2.put(`/jobs/${jobId}/complete`, {
-                            userId: currentUser?.id,
+                          await V2.put(`/jobs/${jobDetailId}/complete`, {
+                            userId: currentUserId,
                             completedAt: new Date().toISOString()
                           });
-                          await onRefresh?.();
-                          closeDetails();
                           toast.success('Job marked complete');
+                          await refreshJobData(jobDetailId);
+                          closeDetails();
                         } catch (e) {
                           toast.error('Complete failed: ' + (e.response?.data?.error || e.message));
                         }

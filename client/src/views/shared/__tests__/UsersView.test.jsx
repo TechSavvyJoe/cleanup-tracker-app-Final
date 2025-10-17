@@ -43,7 +43,7 @@ describe('UsersView', () => {
     render(
       <ToastProvider>
         <UsersView
-          users={props.users || []}
+          users={props.users || {}}
           detailers={props.detailers || detailers}
           onDeleteUser={props.onDeleteUser || jest.fn()}
         />
@@ -57,7 +57,8 @@ describe('UsersView', () => {
     screen.getByText('Detailer One');
     screen.getByText('Manager Mary');
 
-    fireEvent.click(screen.getAllByRole('button', { name: /delete/i })[0]);
+  // Buttons are now labeled 'Remove access'
+  fireEvent.click(screen.getAllByRole('button', { name: /remove access/i })[0]);
 
     expect(onDeleteUser).toHaveBeenCalledWith('1');
   });
@@ -67,13 +68,13 @@ describe('UsersView', () => {
 
     renderView();
 
-    fireEvent.change(screen.getByPlaceholderText('Full Name'), {
+    fireEvent.change(screen.getByLabelText(/Full name/i), {
       target: { value: 'New Detailer' }
     });
-    fireEvent.change(screen.getByPlaceholderText('4-Digit PIN'), {
+    fireEvent.change(screen.getByLabelText(/4-digit PIN/i), {
       target: { value: '9876' }
     });
-    fireEvent.change(screen.getByPlaceholderText('Phone Number (optional)'), {
+    fireEvent.change(screen.getByLabelText(/Phone \(optional\)/i), {
       target: { value: '5557654321' }
     });
     const roleSelect = screen.getByRole('combobox');
@@ -81,7 +82,7 @@ describe('UsersView', () => {
       target: { value: 'manager' }
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+  fireEvent.click(screen.getByRole('button', { name: /add team member/i }));
 
     await waitFor(() => {
       expect(V2.post).toHaveBeenCalledWith('/users', {
@@ -97,24 +98,24 @@ describe('UsersView', () => {
       expect(screen.getByText(/New Detailer added successfully as manager/i)).toBeTruthy();
     });
 
-    await waitFor(() => expect(screen.getByPlaceholderText('Full Name').value).toBe(''));
-    await waitFor(() => expect(screen.getByPlaceholderText('4-Digit PIN').value).toBe(''));
-    await waitFor(() => expect(screen.getByPlaceholderText('Phone Number (optional)').value).toBe(''));
+  await waitFor(() => expect(screen.getByLabelText(/Full name/i).value).toBe(''));
+  await waitFor(() => expect(screen.getByLabelText(/4-digit PIN/i).value).toBe(''));
+  await waitFor(() => expect(screen.getByLabelText(/Phone \(optional\)/i).value).toBe(''));
     await waitFor(() => expect(roleSelect.value).toBe('detailer'));
   });
 
   it('prevents submission when PIN is not 4 digits', () => {
     renderView();
 
-    fireEvent.change(screen.getByPlaceholderText('Full Name'), {
+    fireEvent.change(screen.getByLabelText(/Full name/i), {
       target: { value: 'Short Pin' }
     });
-    fireEvent.change(screen.getByPlaceholderText('4-Digit PIN'), {
+    fireEvent.change(screen.getByLabelText(/4-digit PIN/i), {
       target: { value: '12' }
     });
 
     // Button should be disabled when PIN is not 4 digits
-    const submitButton = screen.getByRole('button', { name: /add member/i });
+  const submitButton = screen.getByRole('button', { name: /add team member/i });
     expect(submitButton.disabled).toBe(true);
     expect(V2.post).not.toHaveBeenCalled();
   });
@@ -124,20 +125,20 @@ describe('UsersView', () => {
 
     renderView();
 
-    fireEvent.change(screen.getByPlaceholderText('Full Name'), {
+    fireEvent.change(screen.getByLabelText(/Full name/i), {
       target: { value: 'Error User' }
     });
-    fireEvent.change(screen.getByPlaceholderText('4-Digit PIN'), {
+    fireEvent.change(screen.getByLabelText(/4-digit PIN/i), {
       target: { value: '1234' }
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }));
+  fireEvent.click(screen.getByRole('button', { name: /add team member/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Failed to add user: Network down/i)).toBeTruthy();
     });
 
-    expect(screen.getByRole('button', { name: /add member/i }).disabled).toBe(false);
+  expect(screen.getByRole('button', { name: /add team member/i }).disabled).toBe(false);
   });
 
   it('opens the SMS composer when pressing Send SMS', () => {

@@ -8,51 +8,14 @@ A comprehensive vehicle detailing and cleanup job management system with web and
 
 ## 🚀 Quick Start
 
-### Web Application
-```bash
-# Install dependencies
-npm run install:all
-
-# Start development servers (frontend + backend)
-npm run dev
-
-# Build for production
-npm run build
-npm start
-```
-
-### Mobile App (iOS/Android)
-```bash
-cd mobile
-npm install
-npm run ios      # iOS Simulator
-npm run android  # Android Emulator
-```
-
 ---
-
-## 📋 Features
-
-### ✨ Core Capabilities
-- **Job Management** - Create, track, and complete vehicle cleanup jobs
-- **User Management** - Role-based access (Manager, Detailer, Salesperson, QC)
-- **Inventory Sync** - Import vehicle inventory from Google Sheets CSV
-- **VIN Scanner** - QR, Code39, and Code128 barcode support
-- **Real-time Updates** - Live job status and timer tracking
-- **Reports & Analytics** - Generate Excel reports with job data
-- **Mobile Support** - Native iOS/Android app via React Native/Expo
-
-### 🎨 User Interfaces
-- **Manager Dashboard** - Full oversight, analytics, user management
-- **Detailer View** - Job assignment, timer, completion workflow
-- **Salesperson Portal** - Job creation and status tracking
-- **QC View** - Quality control and job verification
 
 ---
 
 ## 🏗️ Architecture
 
 ### Frontend (Web)
+
 - **Framework:** React 18.2
 - **Build Tool:** Create React App 5.0.1
 - **State:** Redux + React Hooks
@@ -61,6 +24,7 @@ npm run android  # Android Emulator
 - **Testing:** Jest + React Testing Library (28 tests, 100% pass rate)
 
 ### Backend (API)
+
 - **Runtime:** Node.js + Express
 - **Database:** MongoDB (Mongoose ODM)
 - **Authentication:** JWT (access + refresh tokens)
@@ -69,6 +33,7 @@ npm run android  # Android Emulator
 - **Error Handling:** Custom error classes with structured responses
 
 ### Mobile
+
 - **Framework:** React Native 0.74.3
 - **Platform:** Expo SDK 51.0.0
 - **API Client:** Axios with JWT auth
@@ -77,7 +42,7 @@ npm run android  # Android Emulator
 
 ## 📂 Project Structure
 
-```
+```text
 cleanup-tracker-app/
 ├── client/              # React web application
 │   ├── src/
@@ -111,6 +76,7 @@ cleanup-tracker-app/
 The application has been security audited. See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for details.
 
 ### Active Security Measures
+
 - ✅ JWT authentication with refresh tokens
 - ✅ Rate limiting (100 req/15min per IP)
 - ✅ Helmet.js security headers
@@ -118,9 +84,46 @@ The application has been security audited. See [SECURITY_AUDIT.md](SECURITY_AUDI
 - ✅ CORS with origin restrictions
 - ✅ bcrypt password hashing
 - ✅ MongoDB injection protection
+
+## 🧪 Continuous Integration (recommended)
+
+This repository includes a small GitHub Actions workflow at `.github/workflows/ci.yml` which:
+
+- Installs server and client dependencies
+- Runs the client unit tests (non-watch mode)
+- Starts the server on port 5051 and waits for `/api/health`
+- Fetches `/api/v2/diag` and fails the job if the diagnostics payload does not include `vehicles`, `jobs`, and `users`
+
+To run the CI steps locally (approximation):
+
+```bash
+# Install deps
+npm ci --prefix server
+npm ci --prefix client
+
+# Run client tests
+npm --prefix client test -- --watchAll=false
+
+# Start server (background)
+export PORT=5051 NODE_ENV=test
+npm --prefix server start &> server.log &
+echo $! > server.pid
+
+# Wait for health then probe diag
+curl -sSf http://localhost:5051/api/health
+curl -sSf http://localhost:5051/api/v2/diag | jq .
+
+# Stop server
+kill "$(cat server.pid)" || true
+rm -f server.pid
+```
+
+There's also a tiny helper script at `scripts/diag-check.js` that performs the same diagnostic check using Node.js.
+
 - ✅ Structured error handling (no data leaks)
 
 ### Known Issues
+
 - 5 moderate severity vulnerabilities (all documented and mitigated)
 - Development-only webpack-dev-server advisory (not exploitable in production)
 - See [SECURITY_AUDIT.md](SECURITY_AUDIT.md) for complete analysis
@@ -148,6 +151,7 @@ Set `INVENTORY_CSV_URL` in `server/.env` to your published Google Sheet CSV.
 The server imports on startup and on-demand at `POST /api/v2/vehicles/refresh`.
 
 **Supported formats:**
+
 - VIN, Make, Model, Year, Stock Number, Price, etc.
 - Auto-populate job details from inventory on VIN scan
 
@@ -177,6 +181,7 @@ npm run build              # Verify production build
 ```
 
 **Test Coverage:**
+
 - Overall: 15.19% (focused on critical paths)
 - MySettingsView: 96.29%
 - QCView: 87.09%
@@ -189,6 +194,7 @@ See [TEST_REPORT.md](TEST_REPORT.md) for detailed results.
 ## 📦 Deployment
 
 ### Supported Platforms
+
 - ✅ **Cloudflare Pages** (via [wrangler.toml](wrangler.toml))
 - ✅ **Railway** (via [railway.json](railway.json))
 - ✅ **Render** (via [render.yaml](render.yaml))
@@ -214,6 +220,7 @@ See [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for step-by-step deployme
 ## 🛠️ Technology Stack
 
 ### Dependencies Highlights
+
 - **exceljs** - Excel report generation (replaced vulnerable `xlsx`)
 - **jspdf** - PDF generation
 - **html5-qrcode** - Barcode scanning
@@ -236,11 +243,13 @@ See [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for step-by-step deployme
 ## 🎯 Development Workflow
 
 ### Install Dependencies
+
 ```bash
 npm run install:all
 ```
 
 ### Development
+
 ```bash
 npm run dev              # Run both client and server
 npm run dev:client       # Client only (port 3000)
@@ -248,12 +257,14 @@ npm run dev:server       # Server only (port 5051)
 ```
 
 ### Production Build
+
 ```bash
 npm run build            # Build client
 npm start                # Start production server
 ```
 
 ### Testing
+
 ```bash
 cd client
 npm test                 # Run tests
@@ -265,6 +276,7 @@ npm test -- --coverage   # With coverage
 ## 🔧 Environment Variables
 
 ### Server (.env)
+
 ```bash
 NODE_ENV=production
 PORT=5051
@@ -305,7 +317,7 @@ Private - All Rights Reserved
 
 ---
 
-## 🚀 Ready for Production!
+## 🚀 Ready for Production
 
 **Current Status:** ✅ All systems operational
 

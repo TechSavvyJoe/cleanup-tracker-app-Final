@@ -31,6 +31,7 @@ import Constants from 'expo-constants';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import { SvgXml } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
 import { VictoryAxis, VictoryBar, VictoryChart, VictoryLine, VictoryTheme } from 'victory-native';
 
@@ -249,6 +250,7 @@ function App() {
 
   const hiddenInputRef = useRef(null);
   const lastAttemptedPin = useRef(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   const normalizedApiBase = useMemo(() => {
     const trimmed = (apiBaseUrl || '').trim();
@@ -443,7 +445,12 @@ function App() {
                 contentContainerStyle={styles.authContainer}
                 keyboardShouldPersistTaps="handled"
               >
-                <BrandHeader />
+                <View style={styles.brandRow}>
+                  <BrandHeader />
+                  <TouchableOpacity style={styles.loginSettingsButton} onPress={() => setShowSettingsModal(true)}>
+                    <Ionicons name="settings-outline" size={22} color={COLORS.textSecondary} />
+                  </TouchableOpacity>
+                </View>
                 <LoginPanel
                   pin={pin}
                   onPinChange={handlePinChange}
@@ -471,14 +478,26 @@ function App() {
                   maxLength={8}
                 />
 
-                <ConnectionSettingsCard
-                  apiBaseUrl={apiBaseUrl}
-                  onChangeBaseUrl={setApiBaseUrl}
-                  employeeId={employeeId}
-                  onChangeEmployeeId={setEmployeeId}
-                  connectionStatus={connectionStatus}
-                  onRecheck={updateConnectionStatus}
-                />
+                {/* Connection settings available via modal */}
+                <Modal visible={showSettingsModal} animationType="slide" transparent>
+                  <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                      <ConnectionSettingsCard
+                        apiBaseUrl={apiBaseUrl}
+                        onChangeBaseUrl={setApiBaseUrl}
+                        employeeId={employeeId}
+                        onChangeEmployeeId={setEmployeeId}
+                        connectionStatus={connectionStatus}
+                        onRecheck={updateConnectionStatus}
+                      />
+                      <View style={{ marginTop: 12 }}>
+                        <TouchableOpacity style={styles.outlineButton} onPress={() => setShowSettingsModal(false)}>
+                          <Text style={styles.outlineButtonText}>Done</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
               </ScrollView>
             </KeyboardAvoidingView>
           ) : (
@@ -505,15 +524,31 @@ function getStatusText(status, baseUrl) {
   }
 }
 
+const CT_LOGO_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32" viewBox="0 0 120 32">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+  </defs>
+  <rect width="120" height="32" rx="6" fill="none" />
+  <g transform="translate(0,0)">
+    <rect x="2" y="2" width="28" height="28" rx="6" fill="url(#g)" />
+    <text x="16" y="21" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="14" fill="#fff">CT</text>
+  </g>
+  <text x="40" y="21" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="14" fill="#ffffff">CleanUp Track</text>
+</svg>
+`;
+
 function BrandHeader() {
   return (
     <View style={styles.brandHeader}>
       <View style={styles.brandMark}>
-        <Ionicons name="sparkles-outline" size={22} color={COLORS.textPrimary} />
+        <SvgXml xml={CT_LOGO_SVG} width={52} height={28} />
       </View>
       <View>
         <Text style={styles.brandTitle}>CleanUp Track</Text>
-        {/* Intentionally no subtitle - keep branding minimal */}
       </View>
     </View>
   );

@@ -1,4 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="64" viewBox="0 0 240 64" role="img" aria-labelledby="title">
+  <title id="title">CleanUp Track</title>
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+  </defs>
+  <rect width="240" height="64" rx="12" fill="#0b0f14" />
+  <!-- Monogram CT -->
+  <g transform="translate(18,12)">
+    <rect width="40" height="40" rx="8" fill="url(#g)" />
+    <text x="20" y="28" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="22" fill="#fff">CT</text>
+  </g>
+  <text x="80" y="38" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="22" fill="#ffffff">CleanUp Track</text>
+</svg>
+<?xml version="1.0" encoding="UTF-8"?>
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">

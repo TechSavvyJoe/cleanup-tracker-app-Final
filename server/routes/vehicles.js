@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const Vehicle = require('../models/Vehicle');
+const logger = require('../utils/logger');
 
 // @route   GET api/vehicles/vin/:vin
 // @desc    Get vehicle by VIN
@@ -21,7 +22,7 @@ router.get('/vin/:vin', async (req, res) => {
 
         res.json(vehicle);
     } catch (error) {
-        console.error('Error fetching vehicle by VIN:', error);
+        logger.error('Error fetching vehicle by VIN', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to fetch vehicle'
@@ -62,7 +63,7 @@ router.get('/', async (req, res) => {
 
         res.json(vehicles);
     } catch (error) {
-        console.error('Error fetching vehicles:', error);
+        logger.error('Error fetching vehicles', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to fetch vehicles'
@@ -182,7 +183,7 @@ router.post('/populate', async (req, res) => {
             total
         });
     } catch (error) {
-        console.error('Error populating database from CSV:', error);
+        logger.error('Error populating database from CSV', { error: error.message, stack: error.stack });
         res.status(500).json({
             success: false,
             message: 'Error populating database',
@@ -199,7 +200,7 @@ router.get('/count', async (req, res) => {
         const total = await Vehicle.countDocuments();
         res.json({ total });
     } catch (error) {
-        console.error('Error counting vehicles:', error);
+        logger.error('Error counting vehicles', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -236,7 +237,7 @@ router.get('/search', async (req, res) => {
         const vehicles = await Vehicle.find(query).limit(100);
         res.json(vehicles);
     } catch (error) {
-        console.error('Error searching vehicles:', error);
+        logger.error('Error searching vehicles', { error: error.message, stack: error.stack });
         res.status(500).json({
             error: 'Server error',
             message: 'Failed to search vehicles'

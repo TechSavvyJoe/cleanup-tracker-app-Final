@@ -1,6 +1,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const logger = require('./logger');
 
 const dataDir = path.join(__dirname, '..', 'data');
 const settingsFile = path.join(dataDir, 'settings.json');
@@ -25,7 +26,7 @@ function loadFromDisk() {
     });
     initialized = true;
   } catch (error) {
-    console.warn('settingsStore: failed to load persisted settings:', error.message);
+    logger.warn('settingsStore: failed to load persisted settings', { error: error.message });
     initialized = true;
   }
 }
@@ -55,7 +56,7 @@ async function set(key, value) {
   try {
     await persistToDisk();
   } catch (error) {
-    console.error('settingsStore: failed to persist settings:', error.message);
+    logger.error('settingsStore: failed to persist settings', { error: error.message });
   }
 }
 

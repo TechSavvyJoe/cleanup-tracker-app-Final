@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import PropTypes from 'prop-types';
 import { V2 } from '../../utils/v2Client';
 import { useToast } from '../../components/Toast';

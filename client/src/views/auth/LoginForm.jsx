@@ -50,7 +50,6 @@ export default function LoginForm({ onLogin }) {
       const session = response.data;
 
       if (session?.user && session?.tokens?.accessToken) {
-        console.log('✅ Login successful for:', session.user.name);
         onLogin(session);
         setEmployeeId('');
         setError('');
